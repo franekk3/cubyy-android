@@ -1,6 +1,24 @@
-# Cubyy 🧊
+# <img src="https://github.com/franekk3/cubyy-android/media/cubyy-android-icon.png" width="36" height="36" valign="middle"> Cubyy
+
+[![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-brightgreen.svg)](https://developer.android.com)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Open Source](https://img.shields.io/badge/Open%20Source-%E2%9D%A4-orange.svg)](https://github.com)
 
 **Cubyy** is a native Android speedcubing timer built with Kotlin and Jetpack Compose, featuring complete **Material You (Material 3)** dynamic theming and seamless **Smart Cube** hardware integration.
+
+[![Download APK](https://img.shields.io/badge/Download-APK-success?style=for-the-badge&logo=android)](https://github.com/franekk3/cubyy-android/releases/latest)
+
+---
+
+## 📸 Screenshots
+
+<p align="center">
+  <img src="https://github.com/franekk3/cubyy-android/media/phone1.png" width="19%" />
+  <img src="https://github.com/franekk3/cubyy-android/media/phone2.png" width="19%" />
+  <img src="https://github.com/franekk3/cubyy-android/media/phone3.png" width="19%" />
+  <img src="https://github.com/franekk3/cubyy-android/media/phone4.png" width="19%" />
+  <img src="https://github.com/franekk3/cubyy-android/media/phone5.png" width="19%" />
+</p>
 
 ---
 
@@ -125,3 +143,8 @@ The compiled APK will be output at:
 - `ACCESS_FINE_LOCATION` (Android 11 and earlier): Required by legacy Android OS for BLE peripheral scanning.
 - `VIBRATE`: Provides haptic cues during inspection (8s, 12s) and solve finish.
 
+---
+
+## 📜 License
+
+This project is licensed under the **GNU General Public License v3.0 (GPLv3)**. See the [LICENSE](LICENSE) file for full details.
