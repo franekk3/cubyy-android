@@ -1,0 +1,31 @@
+*.iml
+.DS_Store
+
+# Android Studio / IntelliJ
+.idea/
+
+# Gradle and Android build outputs (all modules)
+.gradle/
+.kotlin/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Machine-specific Android SDK configuration
+local.properties
+.android/
+.sdk/
+
+# Signing material and local secrets
+*.jks
+*.keystore
+*.p12
+*.key
+*.pem
+keystore.properties
+signing.properties
+.env
+.env.*
+!.env.example
+

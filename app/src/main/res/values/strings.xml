@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Cubyy</string>
+    <string name="tab_timer">Timer</string>
+    <string name="tab_smartcube">Smart Cube</string>
+    <string name="tab_history">History</string>
+    <string name="tab_settings">Settings</string>
+</resources>
+
