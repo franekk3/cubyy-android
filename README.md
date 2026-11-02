@@ -1,4 +1,4 @@
-# <img src="https://github.com/franekk3/cubyy-android/blob/main/media/cubyy-android-icon.png?raw=true" width="36" height="36" valign="middle"> Cubyy
+# <img src="https://github.com/franekk3/cubyy-android/blob/main/media/icon.png?raw=true" width="36" height="36" valign="middle"> Cubyy
 
 [![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-brightgreen.svg)](https://developer.android.com)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
