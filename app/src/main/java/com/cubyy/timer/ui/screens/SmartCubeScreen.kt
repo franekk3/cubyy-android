@@ -75,6 +75,7 @@ fun SmartCubeScreen(
     val connectedDevice by smartCubeManager.connectedDevice.collectAsState()
     val virtualCube by timerEngine.virtualCube.collectAsState()
     val reconstructionMoves by timerEngine.reconstructionMoves.collectAsState()
+    val userSettings by timerEngine.userSettings.collectAsState()
 
     // Bluetooth permissions launcher
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -113,13 +114,13 @@ fun SmartCubeScreen(
     ) {
         item {
             Text(
-                text = "Smart Cube",
+                text = "Bluetooth device",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground
             )
             Text(
-                text = "Connect GAN, MoYu, or GiiKER Bluetooth cubes for real-time tracking.",
+                text = "Connect a supported Bluetooth cube or GAN Halo timer.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -138,7 +139,7 @@ fun SmartCubeScreen(
 
         // Live Virtual Cube View
         item {
-            Card(
+            if (connectedDevice?.isTimer != true) Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(
@@ -167,7 +168,7 @@ fun SmartCubeScreen(
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
-                    VirtualCubeView(virtualCube = virtualCube)
+                    VirtualCubeView(virtualCube = virtualCube, appearance = userSettings.cubeAppearance)
 
                     // Recent turns row
                     if (reconstructionMoves.isNotEmpty()) {
@@ -325,7 +326,7 @@ private fun ConnectedDeviceCard(
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         Text(
-                            text = "${device.brand.displayName} • ${device.address}",
+                            text = "${if (device.isTimer) "GAN Timer" else device.brand.displayName} • ${device.address}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
@@ -359,12 +360,14 @@ private fun ConnectedDeviceCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Button(
-                    onClick = onResetSolved,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("Calibrate Solved")
+                if (!device.isTimer) {
+                    Button(
+                        onClick = onResetSolved,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Calibrate Solved")
+                    }
                 }
 
                 OutlinedButton(
@@ -434,7 +437,7 @@ private fun DeviceItemCard(
                 Button(
                     onClick = onConnect,
                     shape = RoundedCornerShape(12.dp),
-                    enabled = !isConnecting
+                    enabled = true
                 ) {
                     Text("Connect")
                 }

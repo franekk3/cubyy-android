@@ -68,7 +68,11 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
 
-            CubyyTheme(darkTheme = isDark, dynamicColor = true) {
+            CubyyTheme(
+                darkTheme = isDark,
+                dynamicColor = settings.colorTheme == "DYNAMIC",
+                colorTheme = settings.colorTheme
+            ) {
                 MainAppContainer(
                     timerEngine = timerEngine,
                     solveRepository = solveRepository,
@@ -103,6 +107,7 @@ fun MainAppContainer(
     smartCubeManager: SmartCubeManager
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
+    val userSettings by settingsRepository.settings.collectAsState()
     val useNavigationRail = LocalConfiguration.current.screenWidthDp >= 600
     val tabs = remember {
         listOf(
@@ -164,7 +169,7 @@ fun MainAppContainer(
                         solveRepository = solveRepository,
                         smartCubeManager = smartCubeManager
                     )
-                    1 -> HistoryScreen(solveRepository = solveRepository)
+                    1 -> HistoryScreen(solveRepository = solveRepository, cubeAppearance = userSettings.cubeAppearance)
                     2 -> SettingsScreen(
                         settingsRepository = settingsRepository,
                         solveRepository = solveRepository

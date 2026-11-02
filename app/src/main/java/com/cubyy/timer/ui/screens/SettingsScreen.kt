@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -48,6 +49,8 @@ import com.cubyy.timer.data.SolveRepository
 import com.cubyy.timer.data.CsTimerImportSummary
 import com.cubyy.timer.data.CsTimerBackup
 import com.cubyy.timer.data.CsTimerBackupImport
+import com.cubyy.timer.smartcube.model.VirtualCube
+import com.cubyy.timer.ui.components.VirtualCubeView
 
 @Composable
 fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: SolveRepository) {
@@ -145,30 +148,33 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
                     )
 
                     Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Hold-to-Start Duration",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "${String.format(java.util.Locale.ROOT, "%.2f", settings.holdToStartMillis / 1000f)}s",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                         Text(
-                            text = "Hold-to-Start Duration",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Time required to hold before the timer becomes ready",
+                            text = "Time to hold before the timer becomes ready (0.15–0.75s)",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        val holdOptions = listOf(150L to "Fast (0.15s)", 300L to "Normal (0.3s)", 500L to "Safe (0.5s)")
-                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                            holdOptions.forEachIndexed { index, (duration, label) ->
-                                SegmentedButton(
-                                    selected = settings.holdToStartMillis == duration,
-                                    onClick = { settingsRepository.updateHoldMillis(duration) },
-                                    shape = SegmentedButtonDefaults.itemShape(index = index, count = holdOptions.size)
-                                ) {
-                                    Text(label, style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
-                        }
+                        Slider(
+                            value = settings.holdToStartMillis.toFloat(),
+                            onValueChange = { settingsRepository.updateHoldMillis(it.toLong()) },
+                            valueRange = 150f..750f,
+                            steps = 11
+                        )
                     }
 
                     SettingToggleRow(
@@ -176,6 +182,13 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
                         subtitle = "Vibrate when ready, during inspection, and on solve stop",
                         checked = settings.hapticFeedback,
                         onCheckedChange = { settingsRepository.updateHaptic(it) }
+                    )
+
+                    SettingToggleRow(
+                        title = "Hide timer while solving",
+                        subtitle = "Hide the time display during a solve",
+                        checked = settings.hideTimerDuringSolve,
+                        onCheckedChange = settingsRepository::updateHideTimerDuringSolve
                     )
                 }
             }
@@ -237,6 +250,29 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
             }
         }
 
+        // Section: Virtual cube styles
+        item {
+            SettingSectionHeader("3D Cube Appearance")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                CubeAppearanceOption(
+                    title = "Classic",
+                    description = "Black body with colored stickers",
+                    appearance = "CLASSIC",
+                    selected = settings.cubeAppearance == "CLASSIC",
+                    onSelect = { settingsRepository.updateCubeAppearance("CLASSIC") },
+                    modifier = Modifier.weight(1f)
+                )
+                CubeAppearanceOption(
+                    title = "Stickerless",
+                    description = "Rounded colored cubies",
+                    appearance = "STICKERLESS",
+                    selected = settings.cubeAppearance == "STICKERLESS",
+                    onSelect = { settingsRepository.updateCubeAppearance("STICKERLESS") },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
         // Section: Appearance & Theme
         item {
             SettingSectionHeader("Appearance")
@@ -288,6 +324,34 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
                             }
                         }
                     }
+                    Text(
+                        text = "Color Theme",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Dynamic uses colors from your wallpaper. Palettes adapt to light and dark mode.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    val colorThemes = listOf(
+                        "DYNAMIC" to "Dynamic",
+                        "BLUE" to "Blue",
+                        "GREEN" to "Green",
+                        "YELLOW" to "Yellow",
+                        "RED" to "Red"
+                    )
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        colorThemes.forEachIndexed { index, (theme, label) ->
+                            SegmentedButton(
+                                selected = settings.colorTheme == theme,
+                                onClick = { settingsRepository.updateColorTheme(theme) },
+                                shape = SegmentedButtonDefaults.itemShape(index = index, count = colorThemes.size)
+                            ) {
+                                Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -302,7 +366,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = "Cubyy - Speedcubing Timer v1.0.0 BETA",
+                        text = "Cubyy - Speedcubing Timer v1.1.0 BETA",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -313,7 +377,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Supported Hardware:\n• GAN: 356 i, i Play, i2, i3, i Carry, i Carry S, i Carry 2, GAN 12 ui, Monster Go 3Ai\n• MoYu: WeiLong AI, AI 2023\n• GiiKER: Super Cube i3s, i2",
+                        text = "Supported Hardware:\n• GAN smart cubes: 356 i, i Play, i2, i3, i Carry, i Carry S, i Carry 2, GAN 12 ui, Monster Go 3Ai\n• GAN timer: Halo Smart Timer (Bluetooth)\n• MoYu: WeiLong AI, AI 2023\n• GiiKER: Super Cube i3s, i2",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -383,6 +447,47 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
             confirmButton = { TextButton(onClick = { backupMessage = null }) { Text("Done") } }
         )
     }
+    }
+}
+
+@Composable
+private fun CubeAppearanceOption(
+    title: String,
+    description: String,
+    appearance: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val previewCube = remember { VirtualCube() }
+    Card(
+        modifier = modifier.clickable(onClick = onSelect),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+            else MaterialTheme.colorScheme.surface
+        ),
+        border = if (selected) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            VirtualCubeView(
+                virtualCube = previewCube,
+                appearance = appearance,
+                autoRotate = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                description,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
     }
 }
 

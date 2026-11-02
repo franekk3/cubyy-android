@@ -6,7 +6,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -59,11 +63,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -101,6 +110,7 @@ fun TimerScreen(
     val scrambleProgress by timerEngine.scrambleProgress.collectAsState()
     val showTouchPenaltyEditor by timerEngine.showTouchPenaltyEditor.collectAsState()
     val lastSolve by timerEngine.lastSolve.collectAsState()
+    val smartCubeSolveSummary by timerEngine.smartCubeSolveSummary.collectAsState()
     val connectedDevice by smartCubeManager.connectedDevice.collectAsState()
     val hasGyroscope by smartCubeManager.hasGyroscope.collectAsState()
     val displayOrientation by timerEngine.displayOrientation.collectAsState()
@@ -143,12 +153,17 @@ fun TimerScreen(
 
     val isLandscape = LocalConfiguration.current.screenWidthDp > LocalConfiguration.current.screenHeightDp
     val isTablet = LocalConfiguration.current.screenWidthDp >= 600
-    val effectiveCubeScale = userSettings.cubeScale * if (isTablet) 0.75f else 1f
+    val effectiveCubeScale = userSettings.cubeScale * when {
+        isTablet -> 0.70f
+        isLandscape -> 0.90f
+        else -> 1f
+    }
 
     // Dynamic color for timer text based on state
     val timerTextColor by animateColorAsState(
         targetValue = when (status) {
             TimerStatus.HOLDING -> TimerRed
+            TimerStatus.BLOCKED -> TimerOrange
             TimerStatus.READY -> TimerGreen
             TimerStatus.INSPECTION -> if (elapsedMillis < 3000L) TimerRed else TimerOrange
             TimerStatus.RUNNING -> MaterialTheme.colorScheme.primary
@@ -157,7 +172,18 @@ fun TimerScreen(
         label = "TimerColorAnimation"
     )
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    if (waitForUpOrCancellation(pass = PointerEventPass.Initial) != null) {
+                        timerEngine.dismissSmartCubeSolveSummary()
+                    }
+                }
+            }
+    ) {
         Column(
             modifier = Modifier
                 .widthIn(max = 1120.dp)
@@ -242,20 +268,31 @@ fun TimerScreen(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TimerReadout(
+                    Column(
                         modifier = Modifier.weight(1f),
-                        status = status,
-                        elapsedMillis = elapsedMillis,
-                        timerTextColor = timerTextColor,
-                        penalty = lastSolve?.penalty ?: Penalty.NONE,
-                        timerEngine = timerEngine,
-                        fontScale = userSettings.timerFontScale
-                    )
-                    if (connectedDevice != null) {
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        TimerReadout(
+                            modifier = Modifier.fillMaxWidth(),
+                            status = status,
+                            elapsedMillis = elapsedMillis,
+                            timerTextColor = timerTextColor,
+                            penalty = lastSolve?.penalty ?: Penalty.NONE,
+                            hideTimeWhileSolving = userSettings.hideTimerDuringSolve,
+                            timerEngine = timerEngine,
+                            fontScale = userSettings.timerFontScale
+                        )
+                        if (connectedDevice?.isTimer == false && status == TimerStatus.STOPPED && smartCubeSolveSummary != null) {
+                            SmartCubeSolveSummaryBar(smartCubeSolveSummary!!.moveCount, smartCubeSolveSummary!!.turnsPerSecond)
+                        }
+                        if (connectedDevice?.isTimer == true) GanTimerGraphic(status, Modifier.widthIn(max = 420.dp).fillMaxWidth(0.72f).aspectRatio(1000f / 280f))
+                    }
+                    if (connectedDevice?.isTimer == false) {
                         VirtualCubeView(
                             virtualCube = virtualCube,
                             animation = cubeTurnAnimation,
                             orientation = displayOrientation,
+                            appearance = userSettings.cubeAppearance,
                             modifier = Modifier.weight(0.9f).aspectRatio(1.2f).scale(effectiveCubeScale)
                         )
                     }
@@ -272,14 +309,21 @@ fun TimerScreen(
                         elapsedMillis = elapsedMillis,
                         timerTextColor = timerTextColor,
                         penalty = lastSolve?.penalty ?: Penalty.NONE,
+                        hideTimeWhileSolving = userSettings.hideTimerDuringSolve,
                         timerEngine = timerEngine,
                         fontScale = userSettings.timerFontScale
                     )
-                    if (connectedDevice != null) {
+                    if (connectedDevice?.isTimer == false && status == TimerStatus.STOPPED && smartCubeSolveSummary != null) {
+                        SmartCubeSolveSummaryBar(smartCubeSolveSummary!!.moveCount, smartCubeSolveSummary!!.turnsPerSecond)
+                    }
+                    if (connectedDevice?.isTimer == true) {
+                        GanTimerGraphic(status, Modifier.widthIn(max = 420.dp).fillMaxWidth(if (isTablet) 0.48f else 0.78f).aspectRatio(1000f / 280f))
+                    } else if (connectedDevice != null) {
                         VirtualCubeView(
                             virtualCube = virtualCube,
                             animation = cubeTurnAnimation,
                             orientation = displayOrientation,
+                            appearance = userSettings.cubeAppearance,
                             modifier = Modifier.fillMaxWidth(if (isTablet) 0.40f else 0.58f).aspectRatio(1.2f).scale(effectiveCubeScale)
                         )
                     }
@@ -290,7 +334,7 @@ fun TimerScreen(
             BottomStatsSection(sessionStats = sessionStats, isTablet = isTablet)
         }
 
-        if (showTouchPenaltyEditor && connectedDevice == null && lastSolve != null) {
+        if (showTouchPenaltyEditor && connectedDevice?.isTimer != false && lastSolve != null) {
             Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
                 Box(
                     modifier = Modifier
@@ -304,7 +348,7 @@ fun TimerScreen(
                 Surface(
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .offset(y = 155.dp)
+                        .offset(y = if (connectedDevice?.isTimer == true) 205.dp else 155.dp)
                         .zIndex(1f),
                     shape = RoundedCornerShape(24.dp),
                     color = Color.Transparent
@@ -357,6 +401,7 @@ fun TimerScreen(
         SmartCubeConnectionDialog(
             connectedDeviceName = connectedDevice?.name,
             connectedDeviceAddress = connectedDevice?.address,
+            connectedDeviceIsTimer = connectedDevice?.isTimer == true,
             connectedBatteryPercent = connectedDevice?.batteryPercent ?: -1,
             devices = discoveredDevices,
             isScanning = isScanning,
@@ -463,6 +508,7 @@ private fun TimerReadout(
     elapsedMillis: Long,
     timerTextColor: Color,
     penalty: Penalty,
+    hideTimeWhileSolving: Boolean,
     timerEngine: TimerEngine,
     fontScale: Float
 ) {
@@ -477,7 +523,9 @@ private fun TimerReadout(
         }
         TimerStatus.READY -> "Ready"
         TimerStatus.HOLDING -> "Hold"
-        TimerStatus.RUNNING, TimerStatus.IDLE -> Solve.formatMillis(elapsedMillis)
+        TimerStatus.BLOCKED -> Solve.formatMillis(elapsedMillis)
+        TimerStatus.RUNNING -> if (hideTimeWhileSolving) "Solving..." else Solve.formatMillis(elapsedMillis)
+        TimerStatus.IDLE -> Solve.formatMillis(elapsedMillis)
         TimerStatus.STOPPED -> when (penalty) {
             Penalty.NONE -> Solve.formatMillis(elapsedMillis)
             Penalty.PLUS_TWO -> "${Solve.formatMillis(elapsedMillis + 2000)}+"
@@ -504,7 +552,11 @@ private fun TimerReadout(
         ) {
             Text(
                 text = displayText,
-                fontSize = (if (status == TimerStatus.READY || status == TimerStatus.HOLDING) 54.sp else 74.sp) * fontScale,
+                fontSize = (when {
+                    status == TimerStatus.RUNNING && hideTimeWhileSolving -> 32.sp
+                    status == TimerStatus.READY || status == TimerStatus.HOLDING -> 54.sp
+                    else -> 74.sp
+                }) * fontScale,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
                 color = timerTextColor,
@@ -512,6 +564,51 @@ private fun TimerReadout(
             )
         }
 
+    }
+}
+
+@Composable
+private fun SmartCubeSolveSummaryBar(moveCount: Int, turnsPerSecond: Double) {
+    Surface(
+        modifier = Modifier.padding(bottom = 8.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+    ) {
+        Text(
+            text = String.format(java.util.Locale.ROOT, "%d moves  ·  %.2f TPS", moveCount, turnsPerSecond),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun GanTimerGraphic(status: TimerStatus, modifier: Modifier = Modifier) {
+    val color = when (status) {
+        TimerStatus.READY -> TimerGreen
+        TimerStatus.HOLDING -> TimerRed
+        TimerStatus.BLOCKED -> TimerOrange
+        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
+    }
+    Canvas(modifier = modifier.padding(vertical = 6.dp)) {
+        val sx = size.width / 1000f
+        val sy = size.height / 280f
+        val stroke = size.height * 0.036f
+        fun rectangle(left: Float, top: Float, right: Float, bottom: Float, radius: Float) {
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(left * sx, top * sy),
+                size = Size((right - left) * sx, (bottom - top) * sy),
+                cornerRadius = CornerRadius(radius * sx, radius * sy),
+                style = Stroke(width = stroke)
+            )
+        }
+        rectangle(50f, 27f, 950f, 252f, 65f)
+        rectangle(72f, 50f, 322f, 230f, 60f)
+        rectangle(678f, 50f, 928f, 230f, 60f)
+        rectangle(400f, 62f, 600f, 137f, 10f)
+        drawCircle(color, radius = 25f * sx, center = Offset(500f * sx, 192f * sy), style = Stroke(width = stroke))
     }
 }
 
@@ -579,12 +676,12 @@ private fun TopBarSection(
                 ) {
                     Icon(
                         imageVector = if (connectedDeviceName != null) Icons.Default.BluetoothConnected else Icons.Default.Bluetooth,
-                        contentDescription = "Smart Cube",
+                        contentDescription = "Bluetooth device",
                         modifier = Modifier.size(16.dp),
                         tint = if (connectedDeviceName != null) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = connectedDeviceName ?: "Connect cube",
+                        text = connectedDeviceName ?: "Connect",
                         style = MaterialTheme.typography.labelMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -629,35 +726,29 @@ private fun BottomStatsSection(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            modifier = if (isTablet) Modifier else Modifier.fillMaxWidth()
+        Row(
+            modifier = Modifier
+                .then(if (isTablet) Modifier else Modifier.fillMaxWidth())
+                .padding(vertical = 12.dp, horizontal = 16.dp),
+            horizontalArrangement = if (isTablet) Arrangement.spacedBy(32.dp) else Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier
-                    .then(if (isTablet) Modifier else Modifier.fillMaxWidth())
-                    .padding(vertical = 12.dp, horizontal = 16.dp),
-                horizontalArrangement = if (isTablet) Arrangement.spacedBy(32.dp) else Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                StatItem(
-                    label = "Ao5",
-                    value = sessionStats.currentAo5?.let { Solve.formatMillis(it) } ?: "-"
-                )
-                StatItem(
-                    label = "Ao12",
-                    value = sessionStats.currentAo12?.let { Solve.formatMillis(it) } ?: "-"
-                )
-                StatItem(
-                    label = "Best",
-                    value = sessionStats.bestSingle?.let { Solve.formatMillis(it) } ?: "-"
-                )
-                StatItem(
-                    label = "Solves",
-                    value = "${sessionStats.solveCount}"
-                )
-            }
+            StatItem(
+                label = "Ao5",
+                value = sessionStats.currentAo5?.let { Solve.formatMillis(it) } ?: "-"
+            )
+            StatItem(
+                label = "Ao12",
+                value = sessionStats.currentAo12?.let { Solve.formatMillis(it) } ?: "-"
+            )
+            StatItem(
+                label = "Best",
+                value = sessionStats.bestSingle?.let { Solve.formatMillis(it) } ?: "-"
+            )
+            StatItem(
+                label = "Solves",
+                value = "${sessionStats.solveCount}"
+            )
         }
     }
 }
@@ -666,6 +757,7 @@ private fun BottomStatsSection(
 private fun SmartCubeConnectionDialog(
     connectedDeviceName: String?,
     connectedDeviceAddress: String?,
+    connectedDeviceIsTimer: Boolean,
     connectedBatteryPercent: Int,
     gyroSupported: Boolean,
     devices: List<SmartCubeDevice>,
@@ -680,7 +772,7 @@ private fun SmartCubeConnectionDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Smart cube") },
+        title = { Text("Bluetooth device") },
         text = {
             Column(
                 modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
@@ -725,14 +817,16 @@ private fun SmartCubeConnectionDialog(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedButton(onClick = onResetCube, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Reset cube state")
+                        if (!connectedDeviceIsTimer) {
+                            OutlinedButton(onClick = onResetCube, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Reset cube state")
+                            }
                         }
                         TextButton(onClick = onDisconnect) { Text("Disconnect") }
                     }
-                    if (gyroSupported) {
+                    if (gyroSupported && !connectedDeviceIsTimer) {
                         OutlinedButton(
                             onClick = onResetGyro,
                             modifier = Modifier.fillMaxWidth()
@@ -748,7 +842,7 @@ private fun SmartCubeConnectionDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Nearby devices", style = MaterialTheme.typography.titleSmall)
-                    FilledTonalButton(onClick = onScan, enabled = !isConnecting) {
+                    FilledTonalButton(onClick = onScan) {
                         if (isScanning) {
                             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(8.dp))
@@ -763,7 +857,7 @@ private fun SmartCubeConnectionDialog(
 
                 if (devices.isEmpty()) {
                     Text(
-                        if (isScanning) "Searching for smart cubes…" else "Scan to find a nearby smart cube.",
+                        if (isScanning) "Searching for Bluetooth devices…" else "Scan to find a nearby Bluetooth device.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -778,11 +872,11 @@ private fun SmartCubeConnectionDialog(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(device.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            Text(device.brand.displayName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (device.isTimer) "GAN Timer" else device.brand.displayName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         OutlinedButton(
                             onClick = { onConnect(device) },
-                            enabled = !alreadyConnected && !isConnecting
+                            enabled = !alreadyConnected
                         ) {
                             if (alreadyConnected) Text("Connected")
                             else if (isConnecting) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)

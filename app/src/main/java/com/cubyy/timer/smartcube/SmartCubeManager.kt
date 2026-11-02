@@ -21,11 +21,13 @@ import com.cubyy.timer.smartcube.model.CubeMove
 import com.cubyy.timer.smartcube.model.CubeOrientation
 import com.cubyy.timer.smartcube.model.SmartCubeBrand
 import com.cubyy.timer.smartcube.model.SmartCubeDevice
+import com.cubyy.timer.smartcube.protocols.GanTimerProtocol
 import com.cubyy.timer.smartcube.protocols.GanGen1Protocol
 import com.cubyy.timer.smartcube.protocols.GanGen2Protocol
 import com.cubyy.timer.smartcube.protocols.GiikerProtocol
 import com.cubyy.timer.smartcube.protocols.MoyuProtocol
 import com.cubyy.timer.smartcube.protocols.SmartCubeProtocol
+import com.cubyy.timer.smartcube.protocols.SmartTimerEvent
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -68,6 +70,8 @@ class SmartCubeManager(private val context: Context) {
 
     private val _cubeMoves = MutableSharedFlow<CubeMove>(extraBufferCapacity = 64)
     val cubeMoves: SharedFlow<CubeMove> = _cubeMoves.asSharedFlow()
+    private val _timerEvents = MutableSharedFlow<SmartTimerEvent>(extraBufferCapacity = 16)
+    val timerEvents: SharedFlow<SmartTimerEvent> = _timerEvents.asSharedFlow()
 
     private var activeGatt: BluetoothGatt? = null
     private var activeProtocol: SmartCubeProtocol? = null
@@ -90,7 +94,8 @@ class SmartCubeManager(private val context: Context) {
         GanGen2Protocol(),
         GanGen1Protocol(),
         MoyuProtocol(),
-        GiikerProtocol()
+        GiikerProtocol(),
+        GanTimerProtocol()
     )
 
     val isBluetoothEnabled: Boolean
@@ -102,13 +107,26 @@ class SmartCubeManager(private val context: Context) {
             result?.device?.let { device ->
                 val name = device.name ?: result.scanRecord?.deviceName
                 val brand = SmartCubeDevice.identifyBrand(name)
-                // Filter smart cubes or recognizable prefixes
-                if (brand != SmartCubeBrand.UNKNOWN || (name != null && isPossibleSmartCube(name))) {
+                val scanRecord = result.scanRecord
+                val advertisesGiikerService = scanRecord?.serviceUuids.orEmpty().any {
+                    it.uuid == GiikerProtocol.SERVICE_DATA
+                } || scanRecord?.serviceData?.keys.orEmpty().any {
+                    it.uuid == GiikerProtocol.SERVICE_DATA
+                }
+                val isGiiker = advertisesGiikerService || brand == SmartCubeBrand.GIIKER
+                // Some Xiaomi/GiiKER firmware advertises a generic device name. Match its
+                // service UUID as well so discovery does not depend on the advertised name.
+                val isTimer = SmartCubeDevice.isGanTimer(name)
+                if (brand != SmartCubeBrand.UNKNOWN || (name != null && isPossibleSmartCube(name)) || isGiiker || isTimer) {
                     val smartDevice = SmartCubeDevice(
                         address = device.address,
-                        name = name ?: "Smart Cube",
-                        brand = brand,
-                        rssi = result.rssi
+                        name = if (isTimer) "GAN Halo Timer" else name ?: when {
+                            isGiiker -> "Xiaomi GiiKER Cube"
+                            else -> "Smart Cube"
+                        },
+                        brand = if (isGiiker) SmartCubeBrand.GIIKER else brand,
+                        rssi = result.rssi,
+                        isTimer = isTimer
                     )
                     updateDiscoveredDevice(smartDevice)
                 }
@@ -257,7 +275,14 @@ class SmartCubeManager(private val context: Context) {
             }
 
             val services = gatt.services.map { it.uuid }
-            val matchingProtocol = protocols.firstOrNull { it.handlesService(services) }
+            val advertisedDevice = _discoveredDevices.value.firstOrNull { it.address == gatt.device.address }
+            val connectedName = gatt.device.name ?: advertisedDevice?.name
+            val isTimer = advertisedDevice?.isTimer == true || SmartCubeDevice.isGanTimer(connectedName)
+            val matchingProtocol = if (isTimer) {
+                protocols.filterIsInstance<GanTimerProtocol>().firstOrNull { it.handlesService(services) }
+            } else {
+                protocols.filterNot { it is GanTimerProtocol }.firstOrNull { it.handlesService(services) }
+            }
 
             if (matchingProtocol != null) {
                 activeProtocol = matchingProtocol
@@ -270,12 +295,20 @@ class SmartCubeManager(private val context: Context) {
                     return
                 }
 
+                val resolvedName = if (isTimer) "GAN Halo Timer" else connectedName ?: matchingProtocol.name
+                val connectedBrand = when {
+                    services.contains(GiikerProtocol.SERVICE_DATA) -> SmartCubeBrand.GIIKER
+                    services.contains(GanGen1Protocol.SERVICE_DATA) || services.contains(GanGen2Protocol.SERVICE_V2DATA) -> SmartCubeBrand.GAN
+                    services.contains(MoyuProtocol.SERVICE_UUID) -> SmartCubeBrand.MOYU
+                    else -> advertisedDevice?.brand ?: SmartCubeBrand.UNKNOWN
+                }
                 val dev = SmartCubeDevice(
                     address = gatt.device.address,
-                    name = gatt.device.name ?: "Smart Cube",
-                    brand = SmartCubeDevice.identifyBrand(gatt.device.name),
+                    name = resolvedName,
+                    brand = connectedBrand,
                     batteryPercent = matchingProtocol.getBatteryLevel(),
-                    isConnected = true
+                    isConnected = true,
+                    isTimer = isTimer
                 )
                 _connectedDevice.value = dev
                 _hasGyroscope.value = matchingProtocol.supportsGyroscope()
@@ -311,6 +344,7 @@ class SmartCubeManager(private val context: Context) {
             value: ByteArray
         ) {
             val protocol = activeProtocol ?: return
+            protocol.onTimerCharacteristicChanged(characteristic, value)?.let { _timerEvents.tryEmit(it) }
             val moves = protocol.onCharacteristicChanged(gatt, characteristic, value)
             if (protocol.supportsGyroscope()) _hasGyroscope.value = true
             protocol.getOrientation()?.let { _cubeOrientation.value = it }

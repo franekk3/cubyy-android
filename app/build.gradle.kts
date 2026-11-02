@@ -11,8 +11,8 @@ android {
         applicationId = "com.cubyy.timer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "v1.0.0 - BETA"
+        versionCode = 2
+        versionName = "v1.1.0 - BETA"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

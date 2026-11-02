@@ -75,6 +75,10 @@ object StatisticsCalculator {
 
     fun calculateAo100(solves: List<Solve>): Long? = calculateRollingAverage(solves, 100, 5)
 
+    fun calculateAo500(solves: List<Solve>): Long? = calculateRollingAverage(solves, 500, 25)
+
+    fun calculateAo1000(solves: List<Solve>): Long? = calculateRollingAverage(solves, 1000, 50)
+
     fun calculateAo5(solves: List<Solve>): Long? {
         return calculateRollingAverage(solves, 5, 1)
     }

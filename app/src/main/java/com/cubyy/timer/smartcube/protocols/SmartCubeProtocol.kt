@@ -17,6 +17,7 @@ interface SmartCubeProtocol {
         characteristic: BluetoothGattCharacteristic,
         value: ByteArray
     ): List<CubeMove>
+    fun onTimerCharacteristicChanged(characteristic: BluetoothGattCharacteristic, value: ByteArray): SmartTimerEvent? = null
     fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {}
     fun refreshBattery(gatt: BluetoothGatt) {}
     fun supportsGyroscope(): Boolean = false
@@ -25,4 +26,10 @@ interface SmartCubeProtocol {
     fun getBatteryLevel(): Int = -1
     fun reset() {}
 }
+
+data class SmartTimerEvent(
+    val state: Int,
+    val recordedTimeMillis: Long? = null,
+    val handsBlockedByPreviousTime: Boolean = false
+)
 

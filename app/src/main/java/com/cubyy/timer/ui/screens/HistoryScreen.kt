@@ -5,9 +5,13 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -65,6 +69,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -91,10 +96,17 @@ import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.Instant
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
+import java.time.temporal.TemporalAdjusters
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(solveRepository: SolveRepository) {
+fun HistoryScreen(solveRepository: SolveRepository, cubeAppearance: String = "CLASSIC") {
     val context = LocalContext.current
     val currentSession by solveRepository.currentSession.collectAsState()
     val sessions by solveRepository.sessions.collectAsState()
@@ -109,6 +121,7 @@ fun HistoryScreen(solveRepository: SolveRepository) {
 
     var selectedSolve by remember { mutableStateOf<Solve?>(null) }
     var selectedStatsPage by remember { mutableIntStateOf(0) }
+    var selectedActivityDate by remember(currentSession) { mutableStateOf<LocalDate?>(null) }
     var showNewSessionDialog by remember { mutableStateOf(false) }
     var showSessionPicker by remember { mutableStateOf(false) }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
@@ -177,9 +190,19 @@ fun HistoryScreen(solveRepository: SolveRepository) {
                 modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                SessionOverviewCard(stats = sessionStats)
+                SessionActivityHeatmap(
+                    solves = sessionSolves,
+                    selectedDate = selectedActivityDate,
+                    onDateSelected = { selectedActivityDate = it }
+                )
+                selectedActivityDate?.let { date ->
+                    DaySummaryCard(
+                        date = date,
+                        solves = sessionSolves.filter { it.localDate() == date }
+                    )
+                }
                 SolveTimeTrendChart(sessionSolves)
-                SessionDetailStats(sessionStats, sessionSolves)
+                SessionStatsCard(sessionStats, sessionSolves)
             }
         } else if (sessionSolves.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -257,6 +280,7 @@ fun HistoryScreen(solveRepository: SolveRepository) {
         ) {
             SolveDetailContent(
                 solve = solve,
+                cubeAppearance = cubeAppearance,
                 onUpdatePenalty = { p ->
                     solveRepository.updatePenalty(solve.id, p)
                     selectedSolve = solve.copy(penalty = p)
@@ -333,35 +357,128 @@ fun HistoryScreen(solveRepository: SolveRepository) {
 }
 
 @Composable
-private fun SessionOverviewCard(stats: SessionStats) {
-    ElevatedCard(
+private fun SessionActivityHeatmap(
+    solves: List<Solve>,
+    selectedDate: LocalDate?,
+    onDateSelected: (LocalDate) -> Unit
+) {
+    val today = remember { LocalDate.now() }
+    val firstDate = remember(today) {
+        today.minusDays(363).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    }
+    val weekCount = (ChronoUnit.DAYS.between(firstDate, today).toInt() / 7) + 1
+    val countsByDate = remember(solves) { solves.groupingBy { it.localDate() }.eachCount() }
+    val heatmapScrollState = rememberScrollState()
+
+    LaunchedEffect(weekCount) {
+        withFrameNanos { }
+        heatmapScrollState.scrollTo(heatmapScrollState.maxValue)
+    }
+
+    Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-        )
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceAround
-            ) {
-                StatCell("Best Single", stats.bestSingle?.let { Solve.formatMillis(it) } ?: "-")
-                StatCell("Best Ao5", stats.bestAo5?.let { Solve.formatMillis(it) } ?: "-")
-                StatCell("Best Ao12", stats.bestAo12?.let { Solve.formatMillis(it) } ?: "-")
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text("Activity", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Daily solves · last 12 months", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("${solves.size} total", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceAround
-            ) {
-                StatCell("Current Ao5", stats.currentAo5?.let { Solve.formatMillis(it) } ?: "-")
-                StatCell("Current Ao12", stats.currentAo12?.let { Solve.formatMillis(it) } ?: "-")
-                StatCell("Mean", stats.sessionMean?.let { Solve.formatMillis(it) } ?: "-")
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val cellSize = ((maxWidth.value - (weekCount - 1) * 3f) / weekCount).coerceIn(9f, 15f).dp
+                val gap = 3.dp
+                Row(Modifier.horizontalScroll(heatmapScrollState), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    repeat(weekCount) { weekIndex ->
+                        val weekStart = firstDate.plusDays(weekIndex * 7L)
+                        Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                            Box(Modifier.width(cellSize).height(16.dp)) {
+                                val monthDate = (0..6).asSequence().map { weekStart.plusDays(it.toLong()) }
+                                    .firstOrNull { it.dayOfMonth == 1 }
+                                if (monthDate != null) {
+                                    Text(
+                                        monthDate.format(DateTimeFormatter.ofPattern("MMM", Locale.getDefault())),
+                                        modifier = Modifier.width(40.dp),
+                                        maxLines = 1,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            repeat(7) { dayIndex ->
+                                val date = weekStart.plusDays(dayIndex.toLong())
+                                if (date.isAfter(today)) {
+                                    Spacer(Modifier.size(cellSize))
+                                } else {
+                                    val count = countsByDate[date] ?: 0
+                                    val color = when {
+                                        count == 0 -> MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
+                                        count <= 2 -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.32f)
+                                        count <= 5 -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)
+                                        count <= 9 -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.78f)
+                                        else -> MaterialTheme.colorScheme.tertiary
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(cellSize)
+                                            .background(color, RoundedCornerShape(3.dp))
+                                            .then(if (date == selectedDate) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(3.dp)) else Modifier)
+                                            .clickable { onDateSelected(date) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                Text("Less", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(6.dp))
+                listOf(0, 1, 3, 6, 10).forEach { count ->
+                    val tileColor = when (count) {
+                        0 -> MaterialTheme.colorScheme.surface.copy(alpha = 0.55f)
+                        1 -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.32f)
+                        3 -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)
+                        6 -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.78f)
+                        else -> MaterialTheme.colorScheme.tertiary
+                    }
+                    Box(Modifier.padding(end = 3.dp).size(10.dp).background(tileColor, RoundedCornerShape(2.dp)))
+                }
+                Text("More", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
+
+@Composable
+private fun DaySummaryCard(date: LocalDate, solves: List<Solve>) {
+    val stats = remember(solves) { StatisticsCalculator.calculateSessionStats(solves) }
+    val totalTime = solves.sumOf { it.timeMillis }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.58f))
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                "${date.format(DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", Locale.getDefault()))} summary",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
+                StatCell("Solves", solves.size.toString())
+                StatCell("Total time", Solve.formatMillis(totalTime))
+                StatCell("Daily mean", stats.sessionMean?.let(Solve::formatMillis) ?: "-")
+            }
+        }
+    }
+}
+
+private fun Solve.localDate(): LocalDate =
+    Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
 
 @Composable
 private fun SolveTimeTrendChart(solves: List<Solve>) {
@@ -441,27 +558,61 @@ private fun ChartLegend(color: Color, label: String) {
 }
 
 @Composable
-private fun SessionDetailStats(stats: SessionStats, solves: List<Solve>) {
+private fun SessionStatsCard(stats: SessionStats, solves: List<Solve>) {
+    val metrics = listOf(
+        "Solves" to stats.solveCount.toString(),
+        "Mean" to (stats.sessionMean?.let(Solve::formatMillis) ?: "-"),
+        "Best single" to (stats.bestSingle?.let(Solve::formatMillis) ?: "-"),
+        "Worst single" to (stats.worstSingle?.let(Solve::formatMillis) ?: "-"),
+        "Current Ao5" to (stats.currentAo5?.let(Solve::formatMillis) ?: "-"),
+        "Best Ao5" to (stats.bestAo5?.let(Solve::formatMillis) ?: "-"),
+        "Current Ao12" to (stats.currentAo12?.let(Solve::formatMillis) ?: "-"),
+        "Best Ao12" to (stats.bestAo12?.let(Solve::formatMillis) ?: "-"),
+        "Ao3" to (StatisticsCalculator.calculateAo3(solves)?.let(Solve::formatMillis) ?: "-"),
+        "Ao100" to (StatisticsCalculator.calculateAo100(solves)?.let(Solve::formatMillis) ?: "-"),
+        "Ao500" to (StatisticsCalculator.calculateAo500(solves)?.let(Solve::formatMillis) ?: "-"),
+        "Ao1000" to (StatisticsCalculator.calculateAo1000(solves)?.let(Solve::formatMillis) ?: "-"),
+        "Total time" to Solve.formatMillis(solves.sumOf { it.timeMillis }),
+        "Average TPS" to (stats.averageTps?.let { String.format(Locale.getDefault(), "%.2f", it) } ?: "-")
+    )
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                StatCell("Ao3", StatisticsCalculator.calculateAo3(solves)?.let(Solve::formatMillis) ?: "-")
-                StatCell("Ao5", stats.currentAo5?.let(Solve::formatMillis) ?: "-")
-                StatCell("Ao12", stats.currentAo12?.let(Solve::formatMillis) ?: "-")
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                StatCell("Ao100", StatisticsCalculator.calculateAo100(solves)?.let(Solve::formatMillis) ?: "-")
-                StatCell("Mean", stats.sessionMean?.let(Solve::formatMillis) ?: "-")
-                StatCell("Average TPS", stats.averageTps?.let { String.format("%.2f", it) } ?: "-")
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                StatCell("Best", stats.bestSingle?.let(Solve::formatMillis) ?: "-")
-                StatCell("Worst", stats.worstSingle?.let(Solve::formatMillis) ?: "-")
-                StatCell("Solves", stats.solveCount.toString())
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                "Session statistics",
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Start,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val columns = if (maxWidth >= 700.dp) 4 else 2
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    metrics.chunked(columns).forEach { rowMetrics ->
+                        Row(Modifier.fillMaxWidth()) {
+                            rowMetrics.forEach { (label, value) ->
+                                Box(
+                                    Modifier.weight(1f).padding(vertical = 8.dp, horizontal = 3.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    StatCell(label, value)
+                                }
+                            }
+                            repeat(columns - rowMetrics.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                }
             }
         }
     }
@@ -560,6 +711,7 @@ private fun SolveHistoryItem(
 @Composable
 private fun SolveDetailContent(
     solve: Solve,
+    cubeAppearance: String,
     onUpdatePenalty: (Penalty) -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit
@@ -690,6 +842,7 @@ private fun SolveDetailContent(
                     VirtualCubeView(
                         virtualCube = replayCube,
                         animation = replayAnimation,
+                        appearance = cubeAppearance,
                         modifier = Modifier.fillMaxWidth(0.55f).align(Alignment.CenterHorizontally)
                     )
                     Row(

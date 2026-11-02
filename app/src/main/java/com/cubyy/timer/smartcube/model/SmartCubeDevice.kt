@@ -13,7 +13,8 @@ data class SmartCubeDevice(
     val brand: SmartCubeBrand,
     val rssi: Int = 0,
     val batteryPercent: Int = -1,
-    val isConnected: Boolean = false
+    val isConnected: Boolean = false,
+    val isTimer: Boolean = false
 ) {
     companion object {
         fun identifyBrand(name: String?): SmartCubeBrand {
@@ -22,9 +23,17 @@ data class SmartCubeDevice(
             return when {
                 upper.startsWith("GAN") || upper.startsWith("MG") || upper.startsWith("AICUBE") -> SmartCubeBrand.GAN
                 upper.startsWith("MOYU") || upper.startsWith("MY") || upper.contains("WEILONG") -> SmartCubeBrand.MOYU
-                upper.startsWith("GIIKER") || upper.startsWith("SUPERCUBE") -> SmartCubeBrand.GIIKER
+                upper.startsWith("GIIKER") || upper.startsWith("SUPERCUBE") ||
+                    upper.startsWith("GICUBE") || upper.startsWith("MI SMART CUBE") ||
+                    upper.startsWith("MI SMART MAGIC CUBE") || upper.startsWith("MI CUBE") -> SmartCubeBrand.GIIKER
                 else -> SmartCubeBrand.UNKNOWN
             }
+        }
+
+        fun isGanTimer(name: String?): Boolean {
+            val upper = name?.uppercase() ?: return false
+            return upper.startsWith("GAN-ST") || upper.startsWith("GANST") ||
+                (upper.contains("GAN") && (upper.contains("HALO") || upper.contains("TIMER")))
         }
     }
 }

@@ -15,6 +15,7 @@ import com.cubyy.timer.smartcube.SmartCubeManager
 import com.cubyy.timer.smartcube.model.CubeMove
 import com.cubyy.timer.smartcube.model.CubeOrientation
 import com.cubyy.timer.smartcube.model.VirtualCube
+import com.cubyy.timer.smartcube.protocols.GanTimerProtocol
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,6 +32,7 @@ import kotlinx.coroutines.withContext
 enum class TimerStatus {
     IDLE,
     HOLDING,
+    BLOCKED,
     READY,
     INSPECTION,
     RUNNING,
@@ -41,6 +43,11 @@ data class CubeTurnAnimation(
     val sequence: Long,
     val before: VirtualCube,
     val move: CubeMove
+)
+
+data class SmartCubeSolveSummary(
+    val moveCount: Int,
+    val turnsPerSecond: Double
 )
 
 class TimerEngine(
@@ -97,6 +104,8 @@ class TimerEngine(
 
     private val _reconstructionMoves = MutableStateFlow<List<CubeMove>>(emptyList())
     val reconstructionMoves: StateFlow<List<CubeMove>> = _reconstructionMoves.asStateFlow()
+    private val _smartCubeSolveSummary = MutableStateFlow<SmartCubeSolveSummary?>(null)
+    val smartCubeSolveSummary: StateFlow<SmartCubeSolveSummary?> = _smartCubeSolveSummary.asStateFlow()
 
     private val _scrambleProgress = MutableStateFlow<List<ScrambleMoveProgress>>(emptyList())
     val scrambleProgress: StateFlow<List<ScrambleMoveProgress>> = _scrambleProgress.asStateFlow()
@@ -118,6 +127,27 @@ class TimerEngine(
         scope.launch {
             smartCubeManager.cubeMoves.collect { move ->
                 onSmartCubeMove(move)
+            }
+        }
+        scope.launch {
+            smartCubeManager.timerEvents.collect { event ->
+                when (event.state) {
+                    GanTimerProtocol.STATE_HANDS_ON -> if (_status.value != TimerStatus.RUNNING) {
+                        _showTouchPenaltyEditor.value = false
+                        _status.value = if (event.handsBlockedByPreviousTime) TimerStatus.BLOCKED else TimerStatus.HOLDING
+                    }
+                    GanTimerProtocol.STATE_GET_SET -> if (_status.value != TimerStatus.RUNNING) {
+                        _status.value = TimerStatus.READY
+                    }
+                    GanTimerProtocol.STATE_HANDS_OFF -> if (_status.value == TimerStatus.HOLDING || _status.value == TimerStatus.READY || _status.value == TimerStatus.BLOCKED) {
+                        _status.value = if (_status.value == TimerStatus.BLOCKED) TimerStatus.STOPPED else TimerStatus.IDLE
+                    }
+                    GanTimerProtocol.STATE_RUNNING -> if (_status.value != TimerStatus.RUNNING) startTimer()
+                    GanTimerProtocol.STATE_STOPPED -> if (_status.value == TimerStatus.RUNNING) stopTimer(event.recordedTimeMillis)
+                    GanTimerProtocol.STATE_IDLE -> if (_status.value == TimerStatus.HOLDING || _status.value == TimerStatus.READY || _status.value == TimerStatus.BLOCKED) {
+                        _status.value = TimerStatus.IDLE
+                    }
+                }
             }
         }
         scope.launch {
@@ -152,6 +182,7 @@ class TimerEngine(
 
     fun newScramble() {
         if (_status.value == TimerStatus.RUNNING) return
+        _smartCubeSolveSummary.value = null
         targetScramble = ScrambleGenerator.generate3x3()
         _currentScramble.value = targetScramble
         resetVirtualCubeToSolved()
@@ -170,6 +201,7 @@ class TimerEngine(
     }
 
     fun calibrateVirtualCubeSolved() {
+        _smartCubeSolveSummary.value = null
         resetVirtualCubeToSolved()
         clearRecoveryState()
         appliedScrambleMoves.clear()
@@ -331,6 +363,7 @@ class TimerEngine(
 
     private fun startTimer() {
         _showTouchPenaltyEditor.value = false
+        _smartCubeSolveSummary.value = null
         _status.value = TimerStatus.RUNNING
         startTimeMillis = SystemClock.elapsedRealtime()
         _reconstructionMoves.value = emptyList()
@@ -343,14 +376,14 @@ class TimerEngine(
         }
     }
 
-    private fun stopTimer() {
+    private fun stopTimer(recordedTimeMillis: Long? = null) {
         timerJob?.cancel()
         timerJob = null
 
-        val finalTime = SystemClock.elapsedRealtime() - startTimeMillis
+        val finalTime = recordedTimeMillis ?: (SystemClock.elapsedRealtime() - startTimeMillis)
         _elapsedMillis.value = finalTime
         _status.value = TimerStatus.STOPPED
-        _showTouchPenaltyEditor.value = smartCubeManager.connectedDevice.value == null
+        _showTouchPenaltyEditor.value = smartCubeManager.connectedDevice.value?.let { it.isTimer } ?: true
         vibrate(80)
 
         var penalty = Penalty.NONE
@@ -376,7 +409,7 @@ class TimerEngine(
             timeMillis = timeMillis,
             scramble = targetScramble,
             penalty = penalty,
-            moveCount = if (connected != null) moves.size else null,
+            moveCount = if (connected != null && !connected.isTimer) moves.size else null,
             reconstruction = if (moves.isNotEmpty()) moves.joinToString(" ") { it.notation } else null,
             cubeName = connected?.name,
             sessionName = solveRepository.currentSession.value
@@ -384,14 +417,23 @@ class TimerEngine(
 
         _lastSolve.value = solve
         solveRepository.addSolve(solve)
+        _smartCubeSolveSummary.value = if (connected != null && moves.isNotEmpty() && timeMillis > 0L) {
+            SmartCubeSolveSummary(moves.size, moves.size / (timeMillis / 1000.0))
+        } else {
+            null
+        }
     }
 
     fun setLastSolvePenalty(penalty: Penalty) {
         val solve = _lastSolve.value ?: return
-        if (solve.cubeName != null) return
+        if (solve.cubeName != null && smartCubeManager.connectedDevice.value?.isTimer != true) return
         val updated = solve.copy(penalty = penalty)
         _lastSolve.value = updated
         solveRepository.updatePenalty(solve.id, penalty)
+    }
+
+    fun dismissSmartCubeSolveSummary() {
+        _smartCubeSolveSummary.value = null
     }
 
     fun dismissTouchPenaltyEditor() {
@@ -400,6 +442,7 @@ class TimerEngine(
 
     fun deleteLastSolve() {
         val solve = _lastSolve.value ?: return
+        _smartCubeSolveSummary.value = null
         solveRepository.deleteSolve(solve.id)
         _lastSolve.value = null
         _elapsedMillis.value = 0L
@@ -407,6 +450,7 @@ class TimerEngine(
     }
 
     private fun onSmartCubeMove(move: CubeMove) {
+        _smartCubeSolveSummary.value = null
         val settings = settingsRepository.settings.value
         val statusBeforeMove = _status.value
         val scrambleWasComplete = scrambleProgressTracker.isComplete()

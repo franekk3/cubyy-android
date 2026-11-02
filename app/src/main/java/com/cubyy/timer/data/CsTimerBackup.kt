@@ -40,15 +40,15 @@ internal object CsTimerBackup {
                         .put("")
                         .put(solve.timestamp / 1000L))
                 }
-            }.toString())
+            })
             sessionData.put(sessionId.toString(), JSONObject().put("name", name).put("opt", JSONObject().put("scrType", "333").put("phases", 1)))
         }
-        root.put("properties", JSONObject().put("sessionData", sessionData.toString()).toString())
+        root.put("properties", JSONObject().put("sessionData", sessionData.toString()))
         return root.toString(2)
     }
 
     fun parse(json: String): CsTimerBackupImport {
-        val root = JSONObject(json)
+        val root = JSONObject(json.removePrefix("\uFEFF").trim())
         val properties = root.optJSONObject("properties")
             ?: root.optString("properties").takeIf(String::isNotBlank)?.let(::JSONObject)
             ?: JSONObject()
@@ -81,7 +81,7 @@ internal object CsTimerBackup {
                 if (!penaltyCode.isFinite() || !timeMillis.isFinite()) continue
                 val scramble = entry.optString(1, "")
                 val timestampSeconds = entry.optDouble(3, Double.NaN)
-                if (scramble.isBlank() || !timestampSeconds.isFinite()) continue
+                if (!timestampSeconds.isFinite()) continue
                 val penalty = when (penaltyCode.toInt()) {
                     -1 -> Penalty.DNF
                     2000 -> Penalty.PLUS_TWO
