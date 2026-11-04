@@ -382,7 +382,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = "Cubyy - Speedcubing Timer v2.0 BETA",
+                        text = "Cubyy - Speedcubing Timer v1.3.0 BETA",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )

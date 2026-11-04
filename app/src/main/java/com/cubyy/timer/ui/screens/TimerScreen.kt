@@ -175,7 +175,9 @@ fun TimerScreen(
     val isTablet = configuration.screenWidthDp >= 600
     val quickStatsScale = if (!isTablet && configuration.screenHeightDp < 700) 0.94f else 1f
     val context = LocalContext.current
-    val touchTimerModifier = if (connectedDevice == null && !showTouchPenaltyEditor) {
+    // Keep the touch pad active after a solve so a new attempt can start while
+    // the post-solve penalty controls are still visible.
+    val touchTimerModifier = if (connectedDevice == null) {
         Modifier.pointerInput(timerEngine) {
             detectTapGestures(onPress = {
                 timerEngine.onTouchDown()
