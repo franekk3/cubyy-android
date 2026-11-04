@@ -11,6 +11,7 @@ import com.cubyy.timer.data.SettingsRepository
 import com.cubyy.timer.data.Solve
 import com.cubyy.timer.data.SolveRepository
 import com.cubyy.timer.scramble.ScrambleGenerator
+import com.cubyy.timer.scramble.WcaEvent
 import com.cubyy.timer.smartcube.SmartCubeManager
 import com.cubyy.timer.smartcube.model.CubeMove
 import com.cubyy.timer.smartcube.model.CubeOrientation
@@ -50,6 +51,8 @@ data class SmartCubeSolveSummary(
     val turnsPerSecond: Double
 )
 
+data class PendingMultiBlindResult(val timeMillis: Long, val attempted: Int)
+
 class TimerEngine(
     private val context: Context,
     private val solveRepository: SolveRepository,
@@ -75,9 +78,14 @@ class TimerEngine(
     private val _elapsedMillis = MutableStateFlow(0L)
     val elapsedMillis: StateFlow<Long> = _elapsedMillis.asStateFlow()
 
-    private val _currentScramble = MutableStateFlow(ScrambleGenerator.generate3x3())
+    private val _currentScramble = MutableStateFlow("")
     val currentScramble: StateFlow<String> = _currentScramble.asStateFlow()
     private var targetScramble = _currentScramble.value
+    private val _isGeneratingScramble = MutableStateFlow(true)
+    val isGeneratingScramble: StateFlow<Boolean> = _isGeneratingScramble.asStateFlow()
+    private val _scrambleGenerationError = MutableStateFlow<String?>(null)
+    val scrambleGenerationError: StateFlow<String?> = _scrambleGenerationError.asStateFlow()
+    private var scrambleRequestId = 0L
     private val appliedScrambleMoves = mutableListOf<CubeMove>()
     private var recoveryCheckpointMoves: List<CubeMove> = emptyList()
     private var recoveryProgressSnapshot: List<ScrambleMoveProgress> = emptyList()
@@ -106,6 +114,10 @@ class TimerEngine(
     val reconstructionMoves: StateFlow<List<CubeMove>> = _reconstructionMoves.asStateFlow()
     private val _smartCubeSolveSummary = MutableStateFlow<SmartCubeSolveSummary?>(null)
     val smartCubeSolveSummary: StateFlow<SmartCubeSolveSummary?> = _smartCubeSolveSummary.asStateFlow()
+    private val _multiBlindAttempted = MutableStateFlow(5)
+    val multiBlindAttempted: StateFlow<Int> = _multiBlindAttempted.asStateFlow()
+    private val _pendingMultiBlindResult = MutableStateFlow<PendingMultiBlindResult?>(null)
+    val pendingMultiBlindResult: StateFlow<PendingMultiBlindResult?> = _pendingMultiBlindResult.asStateFlow()
 
     private val _scrambleProgress = MutableStateFlow<List<ScrambleMoveProgress>>(emptyList())
     val scrambleProgress: StateFlow<List<ScrambleMoveProgress>> = _scrambleProgress.asStateFlow()
@@ -121,7 +133,11 @@ class TimerEngine(
 
     init {
         resetVirtualCubeToSolved()
-        resetScrambleProgress()
+        scope.launch {
+            solveRepository.currentSession.collect { session ->
+                requestScramble(session.eventId, resetTimerState = true)
+            }
+        }
 
         // Listen for smart cube moves
         scope.launch {
@@ -156,6 +172,10 @@ class TimerEngine(
                 .distinctUntilChanged()
                 .collect { address ->
                     if (address != null) {
+                        val device = smartCubeManager.connectedDevice.value
+                        if (device?.isTimer != true && !solveRepository.currentSession.value.event.threeByThreeHardware) {
+                            solveRepository.switchToDefaultSession(WcaEvent.CUBE_3.id)
+                        }
                         calibrateVirtualCubeSolved()
                     } else {
                         gyroHome = null
@@ -181,14 +201,53 @@ class TimerEngine(
     }
 
     fun newScramble() {
-        if (_status.value == TimerStatus.RUNNING) return
+        if (_status.value == TimerStatus.RUNNING || _isGeneratingScramble.value) return
         _smartCubeSolveSummary.value = null
-        targetScramble = ScrambleGenerator.generate3x3()
-        _currentScramble.value = targetScramble
-        resetVirtualCubeToSolved()
-        resetScrambleTracking()
-        _status.value = TimerStatus.IDLE
-        _elapsedMillis.value = 0L
+        requestScramble(solveRepository.currentSession.value.eventId, resetTimerState = true)
+    }
+
+    fun setMultiBlindAttempted(count: Int) {
+        val normalized = count.coerceIn(1, 99)
+        if (_multiBlindAttempted.value == normalized) return
+        _multiBlindAttempted.value = normalized
+        if (solveRepository.currentSession.value.eventId == "333mbf" && _status.value != TimerStatus.RUNNING) {
+            requestScramble("333mbf", resetTimerState = true)
+        }
+    }
+
+    private fun requestScramble(eventId: String, resetTimerState: Boolean) {
+        val event = WcaEvent.fromId(eventId)
+        val requestId = ++scrambleRequestId
+        _isGeneratingScramble.value = true
+        _scrambleGenerationError.value = null
+        if (resetTimerState) {
+            _showTouchPenaltyEditor.value = false
+            _lastSolve.value = null
+            _status.value = TimerStatus.IDLE
+            _elapsedMillis.value = 0L
+        }
+        scope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.Default) {
+                    if (event.id == "333mbf") ScrambleGenerator.generateMultiBlind(_multiBlindAttempted.value)
+                    else ScrambleGenerator.generate(event.id)
+                }
+            }
+            if (requestId != scrambleRequestId) return@launch
+            result.onSuccess { scramble ->
+                targetScramble = scramble
+                _currentScramble.value = scramble
+                resetVirtualCubeToSolved()
+                resetScrambleTracking()
+                _scrambleGenerationError.value = null
+            }.onFailure { error ->
+                targetScramble = ""
+                _currentScramble.value = ""
+                resetScrambleTracking()
+                _scrambleGenerationError.value = error.message ?: "Could not generate a scramble."
+            }
+            _isGeneratingScramble.value = false
+        }
     }
 
     private fun resetVirtualCubeToSolved() {
@@ -196,7 +255,10 @@ class TimerEngine(
     }
 
     private fun resetScrambleProgress() {
-        scrambleProgressTracker = ScrambleProgressTracker(_currentScramble.value)
+        val eventId = solveRepository.currentSession.value.eventId
+        val tracksFaceTurns = eventId in setOf("333", "333oh", "333fm")
+        val trackedScramble = if (tracksFaceTurns) _currentScramble.value else ""
+        scrambleProgressTracker = ScrambleProgressTracker(trackedScramble)
         _scrambleProgress.value = scrambleProgressTracker.currentProgress()
     }
 
@@ -255,6 +317,7 @@ class TimerEngine(
      * Called when the user presses down on the timer touch surface.
      */
     fun onTouchDown() {
+        if (_isGeneratingScramble.value || targetScramble.isBlank()) return
         val settings = settingsRepository.settings.value
 
         when (_status.value) {
@@ -262,7 +325,7 @@ class TimerEngine(
                 stopTimer()
             }
             TimerStatus.IDLE -> {
-                if (settings.inspectionEnabled) {
+                if (settings.inspectionEnabled && solveRepository.currentSession.value.eventId != "333mbf") {
                     beginInspectionOnRelease = true
                 } else {
                     startHolding()
@@ -273,7 +336,7 @@ class TimerEngine(
             }
             TimerStatus.STOPPED -> {
                 _showTouchPenaltyEditor.value = false
-                if (settings.inspectionEnabled) beginInspectionOnRelease = true else startHolding()
+                if (settings.inspectionEnabled && solveRepository.currentSession.value.eventId != "333mbf") beginInspectionOnRelease = true else startHolding()
             }
             else -> {}
         }
@@ -362,6 +425,7 @@ class TimerEngine(
     }
 
     private fun startTimer() {
+        if (_isGeneratingScramble.value || targetScramble.isBlank()) return
         _showTouchPenaltyEditor.value = false
         _smartCubeSolveSummary.value = null
         _status.value = TimerStatus.RUNNING
@@ -397,11 +461,31 @@ class TimerEngine(
             inspectionStartTime = 0L
         }
 
-        recordSolve(finalTime, penalty)
+        if (solveRepository.currentSession.value.eventId == "333mbf") {
+            _showTouchPenaltyEditor.value = false
+            _lastSolve.value = null
+            _pendingMultiBlindResult.value = PendingMultiBlindResult(finalTime, _multiBlindAttempted.value)
+        } else {
+            recordSolve(finalTime, penalty)
+            prepareNextScrambleAfterSolve()
+        }
+    }
+
+    fun submitMultiBlindSolved(solved: Int) {
+        val pending = _pendingMultiBlindResult.value ?: return
+        val count = solved.coerceIn(0, pending.attempted)
+        recordSolve(pending.timeMillis, Penalty.NONE, pending.attempted, count)
+        _pendingMultiBlindResult.value = null
+        _showTouchPenaltyEditor.value = smartCubeManager.connectedDevice.value?.let { it.isTimer } ?: true
         prepareNextScrambleAfterSolve()
     }
 
-    private fun recordSolve(timeMillis: Long, penalty: Penalty) {
+    private fun recordSolve(
+        timeMillis: Long,
+        penalty: Penalty,
+        multiBlindAttempted: Int? = null,
+        multiBlindSolved: Int? = null
+    ): Solve {
         val connected = smartCubeManager.connectedDevice.value
         val moves = _reconstructionMoves.value
 
@@ -412,7 +496,11 @@ class TimerEngine(
             moveCount = if (connected != null && !connected.isTimer) moves.size else null,
             reconstruction = if (moves.isNotEmpty()) moves.joinToString(" ") { it.notation } else null,
             cubeName = connected?.name,
-            sessionName = solveRepository.currentSession.value
+            sessionName = solveRepository.currentSession.value.name,
+            sessionId = solveRepository.currentSession.value.id,
+            eventId = solveRepository.currentSession.value.eventId,
+            multiBlindAttempted = multiBlindAttempted,
+            multiBlindSolved = multiBlindSolved
         )
 
         _lastSolve.value = solve
@@ -422,6 +510,7 @@ class TimerEngine(
         } else {
             null
         }
+        return solve
     }
 
     fun setLastSolvePenalty(penalty: Penalty) {
@@ -485,6 +574,7 @@ class TimerEngine(
 
         // Auto-start timer on first move if idle or in inspection
         if (settings.smartCubeAutoStart &&
+            solveRepository.currentSession.value.eventId in setOf("333", "333oh", "333fm", "333mbf") &&
             preparingSolve &&
             scrambleWasComplete
         ) {
@@ -506,10 +596,8 @@ class TimerEngine(
 
     private fun prepareNextScrambleAfterSolve() {
         clearRecoveryState()
-        targetScramble = ScrambleGenerator.generate3x3()
-        _currentScramble.value = targetScramble
         appliedScrambleMoves.clear()
-        resetScrambleProgress()
+        requestScramble(solveRepository.currentSession.value.eventId, resetTimerState = false)
     }
 
     private fun scheduleScrambleRecovery() {

@@ -17,7 +17,11 @@ data class Solve(
     val moveCount: Int? = null,
     val reconstruction: String? = null,
     val cubeName: String? = null,
-    val sessionName: String = "Default"
+    val sessionName: String = "Default",
+    val sessionId: String = "",
+    val eventId: String = "333",
+    val multiBlindAttempted: Int? = null,
+    val multiBlindSolved: Int? = null
 ) {
     val effectiveTimeMillis: Long
         get() = when (penalty) {
@@ -33,6 +37,14 @@ data class Solve(
         }
 
     fun formattedTime(includePenalty: Boolean = true): String {
+        if (eventId == "333mbf" && multiBlindAttempted != null && multiBlindSolved != null) {
+            if (penalty == Penalty.DNF) return "DNF (${multiBlindSolved}/${multiBlindAttempted})"
+            val difference = 2 * multiBlindSolved - multiBlindAttempted
+            if (difference < 0 || multiBlindSolved == 1) return "DNF (${multiBlindSolved}/${multiBlindAttempted})"
+            val recordedTime = timeMillis + if (penalty == Penalty.PLUS_TWO) 2_000L else 0L
+            val plus = if (penalty == Penalty.PLUS_TWO && includePenalty) "+" else ""
+            return "${multiBlindSolved}/${multiBlindAttempted} in ${formatMillis(recordedTime)}$plus"
+        }
         return when (penalty) {
             Penalty.DNF -> if (includePenalty) "DNF (${formatMillis(timeMillis)})" else "DNF"
             Penalty.PLUS_TWO -> if (includePenalty) "${formatMillis(timeMillis + 2000)}+" else formatMillis(timeMillis + 2000)

@@ -11,8 +11,8 @@ android {
         applicationId = "com.cubyy.timer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "v1.1.0 - BETA"
+        versionCode = 3
+        versionName = "v1.2.0 - BETA"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -59,6 +59,8 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.min2phase)
+    implementation("org.worldcubeassociation.tnoodle:lib-scrambles:0.20.0")
+    implementation("com.caverock:androidsvg-aar:1.4")
 
     testImplementation(libs.junit)
     testImplementation(libs.json)

@@ -36,6 +36,7 @@ import com.cubyy.timer.data.SettingsRepository
 import com.cubyy.timer.data.SolveRepository
 import com.cubyy.timer.smartcube.SmartCubeManager
 import com.cubyy.timer.timer.TimerEngine
+import com.cubyy.timer.timer.TimerStatus
 import com.cubyy.timer.ui.screens.HistoryScreen
 import com.cubyy.timer.ui.screens.SettingsScreen
 import com.cubyy.timer.ui.screens.TimerScreen
@@ -108,6 +109,8 @@ fun MainAppContainer(
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val userSettings by settingsRepository.settings.collectAsState()
+    val connectedDevice by smartCubeManager.connectedDevice.collectAsState()
+    val timerStatus by timerEngine.status.collectAsState()
     val useNavigationRail = LocalConfiguration.current.screenWidthDp >= 600
     val tabs = remember {
         listOf(
@@ -169,7 +172,12 @@ fun MainAppContainer(
                         solveRepository = solveRepository,
                         smartCubeManager = smartCubeManager
                     )
-                    1 -> HistoryScreen(solveRepository = solveRepository, cubeAppearance = userSettings.cubeAppearance)
+                    1 -> HistoryScreen(
+                        solveRepository = solveRepository,
+                        cubeAppearance = userSettings.cubeAppearance,
+                        smartCubeConnected = connectedDevice?.isTimer == false,
+                        timerRunning = timerStatus == TimerStatus.RUNNING
+                    )
                     2 -> SettingsScreen(
                         settingsRepository = settingsRepository,
                         solveRepository = solveRepository

@@ -46,6 +46,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -78,6 +79,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -92,6 +94,8 @@ import com.cubyy.timer.data.SolveRepository
 import com.cubyy.timer.data.StatisticsCalculator
 import com.cubyy.timer.timer.CubeTurnAnimation
 import com.cubyy.timer.ui.components.VirtualCubeView
+import com.cubyy.timer.ui.components.WcaScrambleImages
+import com.cubyy.timer.ui.components.PuzzleSessionPickerDialog
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -106,14 +110,19 @@ import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(solveRepository: SolveRepository, cubeAppearance: String = "CLASSIC") {
+fun HistoryScreen(
+    solveRepository: SolveRepository,
+    cubeAppearance: String = "CLASSIC",
+    smartCubeConnected: Boolean = false,
+    timerRunning: Boolean = false
+) {
     val context = LocalContext.current
     val currentSession by solveRepository.currentSession.collectAsState()
     val sessions by solveRepository.sessions.collectAsState()
     val allSolves by solveRepository.solves.collectAsState()
 
-    val sessionSolves = remember(allSolves, currentSession) {
-        allSolves.filter { it.sessionName == currentSession }
+    val sessionSolves = remember(allSolves, currentSession.id) {
+        allSolves.filter { it.sessionId == currentSession.id }
     }
     val sessionStats = remember(sessionSolves) {
         StatisticsCalculator.calculateSessionStats(sessionSolves)
@@ -126,6 +135,7 @@ fun HistoryScreen(solveRepository: SolveRepository, cubeAppearance: String = "CL
     var showSessionPicker by remember { mutableStateOf(false) }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
     var sessionPendingDelete by remember { mutableStateOf<String?>(null) }
+    var newSessionEventId by remember { mutableStateOf(currentSession.eventId) }
 
     Box(modifier = Modifier.fillMaxSize()) {
     Column(
@@ -149,11 +159,14 @@ fun HistoryScreen(solveRepository: SolveRepository, cubeAppearance: String = "CL
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { showSessionPicker = true }) {
-                        Text("$currentSession  ·  ${sessionSolves.size} solves")
+                    TextButton(onClick = { showSessionPicker = true }, enabled = !timerRunning) {
+                        Text("${currentSession.name}  ·  ${sessionSolves.size} solves")
                     }
-                    if (currentSession != "Default") {
-                        IconButton(onClick = { sessionPendingDelete = currentSession }) {
+                    if (currentSession.name != "Default") {
+                        IconButton(
+                            onClick = { sessionPendingDelete = currentSession.id },
+                            enabled = !timerRunning
+                        ) {
                             Icon(Icons.Default.FolderDelete, contentDescription = "Delete session", tint = MaterialTheme.colorScheme.error)
                         }
                     }
@@ -161,7 +174,10 @@ fun HistoryScreen(solveRepository: SolveRepository, cubeAppearance: String = "CL
             }
 
             Row {
-                IconButton(onClick = { showNewSessionDialog = true }) {
+                IconButton(
+                    onClick = { newSessionEventId = currentSession.eventId; showNewSessionDialog = true },
+                    enabled = !timerRunning
+                ) {
                     Icon(Icons.Default.Add, contentDescription = "New Session")
                 }
                 IconButton(
@@ -230,38 +246,28 @@ fun HistoryScreen(solveRepository: SolveRepository, cubeAppearance: String = "CL
     }
 
     if (showSessionPicker) {
-        AlertDialog(
-            onDismissRequest = { showSessionPicker = false },
-            title = { Text("Select session") },
-            text = {
-                Column {
-                    sessions.forEach { session ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                solveRepository.switchSession(session)
-                                showSessionPicker = false
-                            },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(selected = session == currentSession, onClick = {
-                                solveRepository.switchSession(session)
-                                showSessionPicker = false
-                            })
-                            Text(session)
-                        }
-                    }
-                }
+        PuzzleSessionPickerDialog(
+            sessions = sessions,
+            currentSession = currentSession,
+            restrictToThreeByThree = smartCubeConnected,
+            title = "Select session",
+            onSelect = { solveRepository.switchSession(it); showSessionPicker = false },
+            onCreate = { eventId ->
+                newSessionEventId = eventId
+                showSessionPicker = false
+                showNewSessionDialog = true
             },
-            confirmButton = { TextButton(onClick = { showSessionPicker = false }) { Text("Done") } }
+            onDismiss = { showSessionPicker = false }
         )
     }
 
     sessionPendingDelete?.let { session ->
-        val solveCount = allSolves.count { it.sessionName == session }
+        val targetSession = sessions.firstOrNull { it.id == session }
+        val solveCount = allSolves.count { it.sessionId == session }
         AlertDialog(
             onDismissRequest = { sessionPendingDelete = null },
             title = { Text("Delete session?") },
-            text = { Text("Delete '$session' and all $solveCount solve(s) in it? This cannot be undone.") },
+            text = { Text("Delete '${targetSession?.let { "${it.event.label} · ${it.name}" } ?: "session"}' and all $solveCount solve(s) in it? This cannot be undone.") },
             confirmButton = {
                 Button(onClick = {
                     solveRepository.deleteSession(session)
@@ -314,7 +320,7 @@ fun HistoryScreen(solveRepository: SolveRepository, cubeAppearance: String = "CL
                 Button(
                     onClick = {
                         if (sessionNameInput.isNotBlank()) {
-                            solveRepository.addSession(sessionNameInput.trim())
+                            solveRepository.addSession(sessionNameInput.trim(), newSessionEventId)
                             showNewSessionDialog = false
                         }
                     }
@@ -335,7 +341,7 @@ fun HistoryScreen(solveRepository: SolveRepository, cubeAppearance: String = "CL
         AlertDialog(
             onDismissRequest = { showClearConfirmDialog = false },
             title = { Text("Clear Session") },
-            text = { Text("Are you sure you want to delete all ${sessionSolves.size} solves in '$currentSession'?") },
+            text = { Text("Are you sure you want to delete all ${sessionSolves.size} solves in '${currentSession.name}'?") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -717,6 +723,8 @@ private fun SolveDetailContent(
     onShare: () -> Unit
 ) {
     val context = LocalContext.current
+    val isTablet = LocalConfiguration.current.screenWidthDp >= 600
+    val scrambleImageWidthFraction = if (isTablet) 0.48f else 0.78f
     val replayMoves = remember(solve.id, solve.reconstruction) {
         solve.reconstruction.orEmpty().split("\\s+".toRegex()).mapNotNull(CubeMove::fromNotation)
     }
@@ -725,6 +733,7 @@ private fun SolveDetailContent(
     }
     var replayIndex by remember(solve.id) { mutableIntStateOf(0) }
     var isReplaying by remember(solve.id) { mutableStateOf(false) }
+    var show2DScramble by remember(solve.id) { mutableStateOf(false) }
     var replayAnimation by remember(solve.id) { mutableStateOf<CubeTurnAnimation?>(null) }
 
     LaunchedEffect(isReplaying, solve.id) {
@@ -817,6 +826,18 @@ private fun SolveDetailContent(
                     text = solve.scramble,
                     style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
                 )
+                if (solve.reconstruction == null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    WcaScrambleImages(
+                        eventId = solve.eventId,
+                        scramble = solve.scramble,
+                        modifier = Modifier
+                            .fillMaxWidth(scrambleImageWidthFraction)
+                            .widthIn(max = if (isTablet) 320.dp else 280.dp)
+                            .height(if (isTablet) 190.dp else 205.dp)
+                            .align(Alignment.CenterHorizontally)
+                    )
+                }
             }
         }
 
@@ -834,48 +855,78 @@ private fun SolveDetailContent(
                         style = MaterialTheme.typography.labelMedium
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = reco,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    VirtualCubeView(
-                        virtualCube = replayCube,
-                        animation = replayAnimation,
-                        appearance = cubeAppearance,
-                        modifier = Modifier.fillMaxWidth(0.55f).align(Alignment.CenterHorizontally)
-                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = {
-                            if (replayIndex >= replayMoves.size) {
+                        FilterChip(
+                            selected = !show2DScramble,
+                            onClick = { show2DScramble = false },
+                            label = { Text("3D reconstruction") }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        FilterChip(
+                            selected = show2DScramble,
+                            onClick = { isReplaying = false; show2DScramble = true },
+                            label = { Text("2D scramble") }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    if (show2DScramble) {
+                        WcaScrambleImages(
+                            eventId = solve.eventId,
+                            scramble = solve.scramble,
+                            modifier = Modifier
+                                .fillMaxWidth(scrambleImageWidthFraction)
+                                .widthIn(max = if (isTablet) 320.dp else 280.dp)
+                                .height(if (isTablet) 190.dp else 205.dp)
+                                .align(Alignment.CenterHorizontally)
+                        )
+                    } else {
+                        Text(
+                            text = reco,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        VirtualCubeView(
+                            virtualCube = replayCube,
+                            animation = replayAnimation,
+                            appearance = cubeAppearance,
+                            modifier = Modifier.fillMaxWidth(0.55f).align(Alignment.CenterHorizontally)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = {
+                                if (replayIndex >= replayMoves.size) {
+                                    replayCube = VirtualCube().apply { applyScramble(solve.scramble) }
+                                    replayIndex = 0
+                                    replayAnimation = null
+                                }
+                                isReplaying = !isReplaying
+                            }, enabled = replayMoves.isNotEmpty()) {
+                                Icon(
+                                    imageVector = if (isReplaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isReplaying) "Pause replay" else "Play replay"
+                                )
+                            }
+                            IconButton(onClick = {
+                                isReplaying = false
                                 replayCube = VirtualCube().apply { applyScramble(solve.scramble) }
                                 replayIndex = 0
                                 replayAnimation = null
+                            }, enabled = replayMoves.isNotEmpty()) {
+                                Icon(Icons.Default.Replay, contentDescription = "Restart replay")
                             }
-                            isReplaying = !isReplaying
-                        }, enabled = replayMoves.isNotEmpty()) {
-                            Icon(
-                                imageVector = if (isReplaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isReplaying) "Pause replay" else "Play replay"
+                            Text(
+                                "$replayIndex / ${replayMoves.size}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        IconButton(onClick = {
-                            isReplaying = false
-                            replayCube = VirtualCube().apply { applyScramble(solve.scramble) }
-                            replayIndex = 0
-                            replayAnimation = null
-                        }, enabled = replayMoves.isNotEmpty()) {
-                            Icon(Icons.Default.Replay, contentDescription = "Restart replay")
-                        }
-                        Text(
-                            "$replayIndex / ${replayMoves.size}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
             }

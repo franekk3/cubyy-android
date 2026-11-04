@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class UserSettings(
-    val inspectionEnabled: Boolean = true,
+    val inspectionEnabled: Boolean = false,
     val inspectionSeconds: Int = 15,
     val holdToStartMillis: Long = 300L,
     val hapticFeedback: Boolean = true,
@@ -48,7 +48,7 @@ class SettingsRepository(context: Context) {
 
     private fun loadSettings(): UserSettings {
         return UserSettings(
-            inspectionEnabled = prefs.getBoolean(KEY_INSPECTION_ENABLED, true),
+            inspectionEnabled = prefs.getBoolean(KEY_INSPECTION_ENABLED, false),
             holdToStartMillis = prefs.getLong(KEY_HOLD_MILLIS, 300L).coerceIn(150L, 750L),
             hapticFeedback = prefs.getBoolean(KEY_HAPTIC, true),
             smartCubeAutoStart = prefs.getBoolean(KEY_SMART_START, true),

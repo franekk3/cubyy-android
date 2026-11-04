@@ -1,7 +1,11 @@
 package com.cubyy.timer.ui.screens
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
@@ -12,7 +16,6 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
@@ -21,9 +24,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,6 +36,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryFull
@@ -55,6 +60,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,7 +74,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.input.pointer.pointerInput
@@ -78,6 +83,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cubyy.timer.data.SessionStats
@@ -91,6 +97,9 @@ import com.cubyy.timer.timer.TimerEngine
 import com.cubyy.timer.timer.ScrambleMoveProgress
 import com.cubyy.timer.timer.TimerStatus
 import com.cubyy.timer.ui.components.VirtualCubeView
+import com.cubyy.timer.ui.components.PuzzleSessionPickerDialog
+import com.cubyy.timer.ui.components.WcaScrambleImages
+import com.cubyy.timer.scramble.WcaEvent
 import com.cubyy.timer.ui.theme.TimerGreen
 import com.cubyy.timer.ui.theme.TimerOrange
 import com.cubyy.timer.ui.theme.TimerRed
@@ -104,6 +113,8 @@ fun TimerScreen(
     val status by timerEngine.status.collectAsState()
     val elapsedMillis by timerEngine.elapsedMillis.collectAsState()
     val scramble by timerEngine.currentScramble.collectAsState()
+    val isGeneratingScramble by timerEngine.isGeneratingScramble.collectAsState()
+    val scrambleGenerationError by timerEngine.scrambleGenerationError.collectAsState()
     val virtualCube by timerEngine.virtualCube.collectAsState()
     val cubeTurnAnimation by timerEngine.cubeTurnAnimation.collectAsState()
     val userSettings by timerEngine.userSettings.collectAsState()
@@ -111,6 +122,8 @@ fun TimerScreen(
     val showTouchPenaltyEditor by timerEngine.showTouchPenaltyEditor.collectAsState()
     val lastSolve by timerEngine.lastSolve.collectAsState()
     val smartCubeSolveSummary by timerEngine.smartCubeSolveSummary.collectAsState()
+    val multiBlindAttempted by timerEngine.multiBlindAttempted.collectAsState()
+    val pendingMultiBlindResult by timerEngine.pendingMultiBlindResult.collectAsState()
     val connectedDevice by smartCubeManager.connectedDevice.collectAsState()
     val hasGyroscope by smartCubeManager.hasGyroscope.collectAsState()
     val displayOrientation by timerEngine.displayOrientation.collectAsState()
@@ -121,8 +134,8 @@ fun TimerScreen(
 
     val currentSession by solveRepository.currentSession.collectAsState()
     val solves by solveRepository.solves.collectAsState()
-    val sessionSolves = remember(solves, currentSession) {
-        solves.filter { it.sessionName == currentSession }
+    val sessionSolves = remember(solves, currentSession.id) {
+        solves.filter { it.sessionId == currentSession.id }
     }
     val sessionStats = remember(sessionSolves) {
         StatisticsCalculator.calculateSessionStats(sessionSolves)
@@ -131,8 +144,14 @@ fun TimerScreen(
     var showCubeDialog by remember { mutableStateOf(false) }
     var showSessionDialog by remember { mutableStateOf(false) }
     var showCreateSessionDialog by remember { mutableStateOf(false) }
+    var createSessionEventId by remember { mutableStateOf(currentSession.eventId) }
     var showDeleteSolveDialog by remember { mutableStateOf(false) }
+    var showExpandedScramble by remember { mutableStateOf(false) }
     var newSessionName by remember { mutableStateOf("") }
+    var multiBlindSolvedInput by remember { mutableStateOf("") }
+    LaunchedEffect(pendingMultiBlindResult) {
+        if (pendingMultiBlindResult != null) multiBlindSolvedInput = ""
+    }
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -151,8 +170,19 @@ fun TimerScreen(
         }
     }
 
-    val isLandscape = LocalConfiguration.current.screenWidthDp > LocalConfiguration.current.screenHeightDp
-    val isTablet = LocalConfiguration.current.screenWidthDp >= 600
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
+    val isTablet = configuration.screenWidthDp >= 600
+    val quickStatsScale = if (!isTablet && configuration.screenHeightDp < 700) 0.94f else 1f
+    val context = LocalContext.current
+    val touchTimerModifier = if (connectedDevice == null && !showTouchPenaltyEditor) {
+        Modifier.pointerInput(timerEngine) {
+            detectTapGestures(onPress = {
+                timerEngine.onTouchDown()
+                if (tryAwaitRelease()) timerEngine.onTouchUp() else timerEngine.onTouchCancel()
+            })
+        }
+    } else Modifier
     val effectiveCubeScale = userSettings.cubeScale * when {
         isTablet -> 0.70f
         isLandscape -> 0.90f
@@ -195,10 +225,10 @@ fun TimerScreen(
         ) {
             // Top Section: Session & Smart Cube Status Bar
             TopBarSection(
-                currentSession = currentSession,
+                currentSession = currentSession.name,
                 connectedDeviceName = connectedDevice?.name,
                 batteryLevel = connectedDevice?.batteryPercent ?: -1,
-                onSessionClick = { showSessionDialog = true },
+                onSessionClick = { if (status != TimerStatus.RUNNING) showSessionDialog = true },
                 onSmartCubeClick = { showCubeDialog = true },
                 onNewScrambleClick = { timerEngine.newScramble() }
             )
@@ -208,7 +238,12 @@ fun TimerScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 12.dp),
+                        .padding(vertical = 12.dp)
+                        .clickable {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Scramble", scramble))
+                            Toast.makeText(context, "Scramble copied", Toast.LENGTH_SHORT).show()
+                        },
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
@@ -218,7 +253,41 @@ fun TimerScreen(
                         modifier = Modifier.padding(16.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        if (scramble.isBlank()) {
+                        if (currentSession.eventId == "333mbf" && status != TimerStatus.RUNNING) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text("Cubes in this attempt", style = MaterialTheme.typography.labelLarge)
+                                TextButton(
+                                    enabled = multiBlindAttempted > 1 && !isGeneratingScramble,
+                                    onClick = { timerEngine.setMultiBlindAttempted(multiBlindAttempted - 1) }
+                                ) { Text("−") }
+                                Text("$multiBlindAttempted", style = MaterialTheme.typography.titleMedium)
+                                TextButton(
+                                    enabled = multiBlindAttempted < 99 && !isGeneratingScramble,
+                                    onClick = { timerEngine.setMultiBlindAttempted(multiBlindAttempted + 1) }
+                                ) { Text("+") }
+                            }
+                            Text(
+                                "Each line is a separate 3×3 scramble. The attempt has one timer.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                        if (isGeneratingScramble) {
+                            Text(
+                                text = "Generating official scramble…",
+                                style = MaterialTheme.typography.titleSmall,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else if (scrambleGenerationError != null) {
+                            Text(
+                                text = "Scramble generation failed: $scrambleGenerationError",
+                                style = MaterialTheme.typography.titleSmall,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        } else if (scramble.isBlank()) {
                             Text(
                                 text = "Target restored · make the first solve move",
                                 style = MaterialTheme.typography.titleSmall,
@@ -227,33 +296,61 @@ fun TimerScreen(
                                 color = MaterialTheme.colorScheme.primary
                             )
                         } else {
+                            val isMultiBlind = currentSession.eventId == "333mbf"
+                            var scrambleLineCount by remember(scramble) { mutableStateOf(0) }
                             val tokens = scramble.trim().split("\\s+".toRegex())
                             val coloredScramble = buildAnnotatedString {
-                                tokens.forEachIndexed { index, token ->
-                                    val color = when (scrambleProgress.getOrNull(index) ?: ScrambleMoveProgress.PENDING) {
-                                        ScrambleMoveProgress.CORRECT -> TimerGreen
-                                        ScrambleMoveProgress.WRONG -> TimerRed
-                                        ScrambleMoveProgress.PARTIAL -> TimerOrange
-                                        ScrambleMoveProgress.PENDING -> MaterialTheme.colorScheme.onSurface
+                                if (isMultiBlind) {
+                                    scramble.lines().forEachIndexed { index, line ->
+                                        append("${index + 1}.  $line")
+                                        if (index != scramble.lines().lastIndex) append("\n")
                                     }
-                                    pushStyle(SpanStyle(color = color))
-                                    append(token)
-                                    pop()
-                                    if (index != tokens.lastIndex) append("  ")
+                                } else {
+                                    tokens.forEachIndexed { index, token ->
+                                        val color = when (scrambleProgress.getOrNull(index) ?: ScrambleMoveProgress.PENDING) {
+                                            ScrambleMoveProgress.CORRECT -> TimerGreen
+                                            ScrambleMoveProgress.WRONG -> TimerRed
+                                            ScrambleMoveProgress.PARTIAL -> TimerOrange
+                                            ScrambleMoveProgress.PENDING -> MaterialTheme.colorScheme.onSurface
+                                        }
+                                        pushStyle(SpanStyle(color = color))
+                                        append(token)
+                                        pop()
+                                        if (index != tokens.lastIndex) append("  ")
+                                    }
                                 }
                             }
                             Text(
                                 text = coloredScramble,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(
+                                        if (!isTablet) Modifier.heightIn(max = if (isMultiBlind) 72.dp else 84.dp)
+                                            .verticalScroll(rememberScrollState())
+                                        else if (isMultiBlind) Modifier.heightIn(max = 320.dp)
+                                            .verticalScroll(rememberScrollState())
+                                        else Modifier
+                                    ),
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontFamily = FontFamily.Monospace,
-                                    lineHeight = 26.sp,
+                                    lineHeight = if (isMultiBlind) 20.sp else 26.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = MaterialTheme.typography.titleMedium.fontSize * userSettings.scrambleFontScale,
+                                    fontSize = (if (isMultiBlind) 14.sp else MaterialTheme.typography.titleMedium.fontSize) * userSettings.scrambleFontScale,
                                 ),
                                 textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                onTextLayout = { layout ->
+                                    if (scrambleLineCount != layout.lineCount) scrambleLineCount = layout.lineCount
+                                }
                             )
+                            if (!isTablet && scrambleLineCount > 3) {
+                                TextButton(
+                                    onClick = { showExpandedScramble = true },
+                                    modifier = Modifier.align(Alignment.End)
+                                ) {
+                                    Text("Expand scramble")
+                                }
+                            }
                         }
                     }
                 }
@@ -264,7 +361,7 @@ fun TimerScreen(
             // Timer and connected-cube preview share the available center area.
             if (isLandscape) {
                 Row(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    modifier = Modifier.weight(1f).fillMaxWidth().then(touchTimerModifier),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -279,15 +376,17 @@ fun TimerScreen(
                             timerTextColor = timerTextColor,
                             penalty = lastSolve?.penalty ?: Penalty.NONE,
                             hideTimeWhileSolving = userSettings.hideTimerDuringSolve,
-                            timerEngine = timerEngine,
-                            fontScale = userSettings.timerFontScale
+                            fontScale = userSettings.timerFontScale,
+                            showPenaltyEditor = showTouchPenaltyEditor && connectedDevice?.isTimer != false && lastSolve != null,
+                            onPenaltyChange = timerEngine::setLastSolvePenalty,
+                            onDeleteSolve = { showDeleteSolveDialog = true }
                         )
                         if (connectedDevice?.isTimer == false && status == TimerStatus.STOPPED && smartCubeSolveSummary != null) {
                             SmartCubeSolveSummaryBar(smartCubeSolveSummary!!.moveCount, smartCubeSolveSummary!!.turnsPerSecond)
                         }
                         if (connectedDevice?.isTimer == true) GanTimerGraphic(status, Modifier.widthIn(max = 420.dp).fillMaxWidth(0.72f).aspectRatio(1000f / 280f))
                     }
-                    if (connectedDevice?.isTimer == false) {
+                    if (connectedDevice?.isTimer == false && currentSession.event.threeByThreeHardware) {
                         VirtualCubeView(
                             virtualCube = virtualCube,
                             animation = cubeTurnAnimation,
@@ -301,7 +400,7 @@ fun TimerScreen(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.weight(1f).fillMaxWidth()
+                    modifier = Modifier.weight(1f).fillMaxWidth().then(touchTimerModifier)
                 ) {
                     TimerReadout(
                         modifier = Modifier.fillMaxWidth(),
@@ -310,15 +409,17 @@ fun TimerScreen(
                         timerTextColor = timerTextColor,
                         penalty = lastSolve?.penalty ?: Penalty.NONE,
                         hideTimeWhileSolving = userSettings.hideTimerDuringSolve,
-                        timerEngine = timerEngine,
-                        fontScale = userSettings.timerFontScale
+                        fontScale = userSettings.timerFontScale,
+                        showPenaltyEditor = showTouchPenaltyEditor && connectedDevice?.isTimer != false && lastSolve != null,
+                        onPenaltyChange = timerEngine::setLastSolvePenalty,
+                        onDeleteSolve = { showDeleteSolveDialog = true }
                     )
                     if (connectedDevice?.isTimer == false && status == TimerStatus.STOPPED && smartCubeSolveSummary != null) {
                         SmartCubeSolveSummaryBar(smartCubeSolveSummary!!.moveCount, smartCubeSolveSummary!!.turnsPerSecond)
                     }
                     if (connectedDevice?.isTimer == true) {
                         GanTimerGraphic(status, Modifier.widthIn(max = 420.dp).fillMaxWidth(if (isTablet) 0.48f else 0.78f).aspectRatio(1000f / 280f))
-                    } else if (connectedDevice != null) {
+                    } else if (connectedDevice != null && currentSession.event.threeByThreeHardware) {
                         VirtualCubeView(
                             virtualCube = virtualCube,
                             animation = cubeTurnAnimation,
@@ -331,70 +432,54 @@ fun TimerScreen(
             }
 
             // Bottom Section: Session Averages & Quick Stats Bar
-            BottomStatsSection(sessionStats = sessionStats, isTablet = isTablet)
+            BottomStatsSection(
+                sessionStats = sessionStats,
+                isTablet = isTablet,
+                eventId = currentSession.eventId,
+                scramble = scramble,
+                showScrambleImage = connectedDevice?.isTimer != false && scramble.isNotBlank(),
+                touchTimerModifier = touchTimerModifier,
+                quickStatsScale = quickStatsScale
+            )
         }
 
-        if (showTouchPenaltyEditor && connectedDevice?.isTimer != false && lastSolve != null) {
-            Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = timerEngine::dismissTouchPenaltyEditor
-                        )
-                )
+        if (showExpandedScramble) {
+            Dialog(
+                onDismissRequest = { showExpandedScramble = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
                 Surface(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .offset(y = if (connectedDevice?.isTimer == true) 205.dp else 155.dp)
-                        .zIndex(1f),
+                    modifier = Modifier.fillMaxSize().padding(12.dp),
                     shape = RoundedCornerShape(24.dp),
-                    color = Color.Transparent
+                    color = MaterialTheme.colorScheme.surface
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier.fillMaxSize().padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        FilterChip(
-                            selected = lastSolve?.penalty == Penalty.PLUS_TWO,
-                            onClick = {
-                                timerEngine.setLastSolvePenalty(
-                                    if (lastSolve?.penalty == Penalty.PLUS_TWO) Penalty.NONE else Penalty.PLUS_TWO
-                                )
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-                                labelColor = MaterialTheme.colorScheme.onSurface,
-                                selectedContainerColor = Color(0xFF777777),
-                                selectedLabelColor = Color.White
-                            ),
-                            label = { Text("+2") }
-                        )
-                        FilterChip(
-                            selected = lastSolve?.penalty == Penalty.DNF,
-                            onClick = {
-                                timerEngine.setLastSolvePenalty(
-                                    if (lastSolve?.penalty == Penalty.DNF) Penalty.NONE else Penalty.DNF
-                                )
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-                                labelColor = MaterialTheme.colorScheme.onSurface,
-                                selectedContainerColor = Color(0xFF777777),
-                                selectedLabelColor = Color.White
-                            ),
-                            label = { Text("DNF") }
-                        )
-                        IconButton(onClick = { showDeleteSolveDialog = true }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete last solve")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Full scramble", style = MaterialTheme.typography.titleLarge)
+                            TextButton(onClick = { showExpandedScramble = false }) { Text("Close") }
                         }
+                        Text(
+                            text = scramble,
+                            modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontFamily = FontFamily.Monospace,
+                                lineHeight = 28.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
             }
         }
+
     }
 
     if (showCubeDialog) {
@@ -417,37 +502,18 @@ fun TimerScreen(
     }
 
     if (showSessionDialog) {
-        AlertDialog(
-            onDismissRequest = { showSessionDialog = false },
-            title = { Text("Timer session") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    sessions.forEach { session ->
-                        TextButton(
-                            onClick = {
-                                solveRepository.switchSession(session)
-                                showSessionDialog = false
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = if (session == currentSession) "$session  ✓" else session,
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.Start
-                            )
-                        }
-                    }
-                }
+        PuzzleSessionPickerDialog(
+            sessions = sessions,
+            currentSession = currentSession,
+            restrictToThreeByThree = connectedDevice?.isTimer == false,
+            title = "Timer session",
+            onSelect = { session -> solveRepository.switchSession(session); showSessionDialog = false },
+            onCreate = { eventId ->
+                createSessionEventId = eventId
+                showSessionDialog = false
+                showCreateSessionDialog = true
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    showSessionDialog = false
-                    showCreateSessionDialog = true
-                }) { Text("New session") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSessionDialog = false }) { Text("Done") }
-            }
+            onDismiss = { showSessionDialog = false }
         )
     }
 
@@ -467,7 +533,7 @@ fun TimerScreen(
                 TextButton(
                     enabled = newSessionName.isNotBlank(),
                     onClick = {
-                        solveRepository.addSession(newSessionName.trim())
+                        solveRepository.addSession(newSessionName.trim(), createSessionEventId)
                         newSessionName = ""
                         showCreateSessionDialog = false
                     }
@@ -499,6 +565,34 @@ fun TimerScreen(
         )
     }
 
+    pendingMultiBlindResult?.let { pending ->
+        val solved = multiBlindSolvedInput.toIntOrNull()
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Multi-Blind result") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("You attempted ${pending.attempted} cubes in ${Solve.formatMillis(pending.timeMillis)}. How many did you solve?")
+                    androidx.compose.material3.OutlinedTextField(
+                        value = multiBlindSolvedInput,
+                        onValueChange = { value ->
+                            if (value.length <= 2 && (value.isEmpty() || value.all(Char::isDigit))) multiBlindSolvedInput = value
+                        },
+                        label = { Text("Solved (0–${pending.attempted})") },
+                        singleLine = true
+                    )
+                    Text("WCA result: solved minus unsolved; fewer cubes attempted breaks ties.", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = solved != null && solved in 0..pending.attempted,
+                    onClick = { timerEngine.submitMultiBlindSolved(solved ?: return@TextButton) }
+                ) { Text("Save attempt") }
+            }
+        )
+    }
+
 }
 
 @Composable
@@ -509,8 +603,10 @@ private fun TimerReadout(
     timerTextColor: Color,
     penalty: Penalty,
     hideTimeWhileSolving: Boolean,
-    timerEngine: TimerEngine,
-    fontScale: Float
+    fontScale: Float,
+    showPenaltyEditor: Boolean,
+    onPenaltyChange: (Penalty) -> Unit,
+    onDeleteSolve: () -> Unit
 ) {
     val displayText = when (status) {
         TimerStatus.INSPECTION -> {
@@ -541,13 +637,7 @@ private fun TimerReadout(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 132.dp)
-                .pointerInput(Unit) {
-                    detectTapGestures(onPress = {
-                        timerEngine.onTouchDown()
-                        if (tryAwaitRelease()) timerEngine.onTouchUp() else timerEngine.onTouchCancel()
-                    })
-                },
+                .heightIn(min = 132.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -562,6 +652,39 @@ private fun TimerReadout(
                 color = timerTextColor,
                 textAlign = TextAlign.Center
             )
+        }
+        if (showPenaltyEditor) {
+            Row(
+                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(
+                    selected = penalty == Penalty.PLUS_TWO,
+                    onClick = { onPenaltyChange(if (penalty == Penalty.PLUS_TWO) Penalty.NONE else Penalty.PLUS_TWO) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                        labelColor = MaterialTheme.colorScheme.onSurface,
+                        selectedContainerColor = Color(0xFF777777),
+                        selectedLabelColor = Color.White
+                    ),
+                    label = { Text("+2") }
+                )
+                FilterChip(
+                    selected = penalty == Penalty.DNF,
+                    onClick = { onPenaltyChange(if (penalty == Penalty.DNF) Penalty.NONE else Penalty.DNF) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
+                        labelColor = MaterialTheme.colorScheme.onSurface,
+                        selectedContainerColor = Color(0xFF777777),
+                        selectedLabelColor = Color.White
+                    ),
+                    label = { Text("DNF") }
+                )
+                IconButton(onClick = onDeleteSolve, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete last solve")
+                }
+            }
         }
 
     }
@@ -720,35 +843,89 @@ private fun TopBarSection(
 @Composable
 private fun BottomStatsSection(
     sessionStats: SessionStats,
-    isTablet: Boolean
+    isTablet: Boolean,
+    eventId: String,
+    scramble: String,
+    showScrambleImage: Boolean,
+    touchTimerModifier: Modifier = Modifier,
+    quickStatsScale: Float = 1f
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    val statItems = listOf(
+        "Ao5" to (sessionStats.currentAo5?.let { Solve.formatMillis(it) } ?: "-"),
+        "Ao12" to (sessionStats.currentAo12?.let { Solve.formatMillis(it) } ?: "-"),
+        "Best" to (sessionStats.bestSingle?.let { Solve.formatMillis(it) } ?: "-"),
+        "Solves" to "${sessionStats.solveCount}"
+    )
+    if (isTablet) {
         Row(
             modifier = Modifier
-                .then(if (isTablet) Modifier else Modifier.fillMaxWidth())
-                .padding(vertical = 12.dp, horizontal = 16.dp),
-            horizontalArrangement = if (isTablet) Arrangement.spacedBy(32.dp) else Arrangement.SpaceAround,
+                .fillMaxWidth()
+                .widthIn(max = 1120.dp)
+                .height(128.dp)
+                .padding(vertical = 8.dp)
+                .then(touchTimerModifier),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            StatItem(
-                label = "Ao5",
-                value = sessionStats.currentAo5?.let { Solve.formatMillis(it) } ?: "-"
+            Row(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                statItems.forEach { (label, value) -> StatItem(label, value) }
+            }
+            if (showScrambleImage) {
+                WcaScrambleImages(
+                    eventId = eventId,
+                    scramble = scramble,
+                    imageScale = 1f,
+                    modifier = Modifier.width(176.dp).fillMaxHeight().padding(6.dp)
+                )
+            }
+        }
+    } else if (showScrambleImage) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 1000.dp)
+                .aspectRatio(2f)
+                .padding(vertical = 8.dp)
+                .then(touchTimerModifier),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            QuickStatsGrid(statItems, Modifier.weight(1f).fillMaxHeight().scale(quickStatsScale))
+            WcaScrambleImages(
+                eventId = eventId,
+                scramble = scramble,
+                modifier = Modifier.weight(1f).fillMaxHeight().padding(8.dp)
             )
-            StatItem(
-                label = "Ao12",
-                value = sessionStats.currentAo12?.let { Solve.formatMillis(it) } ?: "-"
-            )
-            StatItem(
-                label = "Best",
-                value = sessionStats.bestSingle?.let { Solve.formatMillis(it) } ?: "-"
-            )
-            StatItem(
-                label = "Solves",
-                value = "${sessionStats.solveCount}"
-            )
+        }
+    } else {
+        QuickStatsGrid(
+            items = statItems,
+            modifier = Modifier
+                .fillMaxWidth(0.52f)
+                .widthIn(max = 260.dp)
+                .aspectRatio(1f)
+                .padding(vertical = 8.dp)
+                .then(touchTimerModifier)
+                .scale(quickStatsScale)
+        )
+    }
+}
+
+@Composable
+private fun QuickStatsGrid(items: List<Pair<String, String>>, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        items.chunked(2).forEach { rowItems ->
+            Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                rowItems.forEach { (label, value) ->
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                        StatItem(label = label, value = value)
+                    }
+                }
+            }
         }
     }
 }

@@ -1,16 +1,73 @@
-# <img src="https://github.com/franekk3/cubyy-android/blob/main/media/icon.png?raw=true" width="36" height="36" valign="middle"> Cubyy
+# Cubyy
+
+Cubyy is an open-source speedcubing timer for Android, built with Kotlin, Jetpack Compose, and Material 3. It combines touch timing, Bluetooth smart-cube support, the GAN Halo Timer, TNoodle scrambles, per-event sessions, detailed solve analysis, and csTimer-compatible backups.
 
 [![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-brightgreen.svg)](https://developer.android.com)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Open Source](https://img.shields.io/badge/Open%20Source-%E2%9D%A4-orange.svg)](https://github.com)
-
-**Cubyy** is a native Android speedcubing timer built with Kotlin and Jetpack Compose, featuring complete **Material You (Material 3)** dynamic theming and seamless **Smart Cube** hardware integration.
-
 [![Download APK](https://img.shields.io/badge/Download-APK-success?style=for-the-badge&logo=android)](https://github.com/franekk3/cubyy-android/releases/latest)
 
----
+## Highlights
 
-## 📸 Screenshots
+- Time solves with the touchscreen, a supported Bluetooth smart cube, or a GAN Halo Timer.
+- Generate official WCA-event scrambles with TNoodle and view their 2D diagrams.
+- Keep sessions separate for each puzzle and browse solve history, reconstructions, and statistics.
+- Import and export selected sessions using csTimer-compatible JSON backups.
+- Use the responsive Material 3 interface on phones and tablets, in portrait or landscape.
+
+## Timer and scrambles
+
+### Timing methods
+
+The touch timer uses a configurable hold-to-start delay (0.15–0.75 seconds, 0.3 seconds by default). The touch area spans the available timer space between the scramble and bottom navigation. WCA inspection can be enabled in Settings and is off by default. After a touch solve, the `+2`, `DNF`, and delete controls appear directly below the time. The penalty controls are mutually exclusive, and selecting the active penalty again clears it. Deleting the latest solve asks for confirmation.
+
+The timer can hide its running digits and show “Solving…” instead. Supported smart cubes can start and stop solves automatically; the GAN Halo Timer reports its own timer state over Bluetooth. Smart-cube solves can retain move-by-move reconstruction data, while touch and Halo Timer solves use the same post-solve penalty choices.
+
+### Puzzle events
+
+TNoodle supplies scramble generation and 2D diagrams for the supported events:
+
+- 2×2×2, 3×3×3, 4×4×4, 5×5×5, 6×6×6, and 7×7×7
+- 3×3×3 One-Handed, 3×3×3 Blindfolded, 4×4×4 Blindfolded, and 5×5×5 Blindfolded
+- Clock, Megaminx, Pyraminx, Skewb, and Square-1
+- 3×3×3 Fewest Moves and 3×3×3 Multi-Blind
+- Face-Turning Octahedron (FTO), available as a non-WCA event
+
+Scramble notation is shown above the timer. Tap it to copy the full scramble. On phones, long scrambles can be scrolled; when they exceed the compact preview, an expand button opens a full-screen view. The 2D scramble image is shown alongside quick statistics where supported. It is hidden for smart-cube solves, where the virtual cube and move reconstruction are available instead.
+
+Multi-Blind creates a configurable batch of 3×3 scrambles for one timed attempt. After stopping, enter the number solved to record the result.
+
+## Bluetooth devices
+
+Cubyy includes BLE protocol drivers for supported GAN smart cubes, GiiKER/Xiaomi smart cubes, MoYu smart cubes, and the GAN Halo Timer. The precise models and firmware combinations that work can vary; the app identifies devices through its Bluetooth device picker. Android may request Bluetooth scan and connect permissions when scanning.
+
+Smart-cube support is for 3×3×3 hardware. When a smart cube is connected, event selection is restricted to 3×3×3. Connecting the GAN Halo Timer does not restrict event selection.
+
+For supported cubes, Cubyy can display a 3D virtual cube, compare scramble progress with detected turns, help recover from scramble setup mistakes, and record move count and TPS. The virtual cube supports classic and stickerless appearances and can be rotated to inspect the solve. The GAN Halo Timer view uses its own timer graphic and does not display cube-only reconstruction or TPS data.
+
+## Sessions, history, and statistics
+
+Sessions belong to a puzzle event, so similarly named sessions for different puzzles keep separate solves. Cubyy creates a `Default` session for each supported event. The event and session picker lets you change puzzles, select an existing session, or create a new one. A connected smart cube keeps the picker on 3×3×3 sessions.
+
+Solve history stores the time, penalty, scramble, and date, plus reconstruction data when a smart cube supplied it. Solve details include a TNoodle 2D scramble diagram; smart-cube solves can switch between that diagram and the 3D move reconstruction. Users can edit penalties, delete solves, and share solve details.
+
+Statistics include session mean, best and worst single, current and best Ao5/Ao12, Ao3, Ao100, Ao500, Ao1000, total solve time, and average TPS when move data is available. The solve activity chart groups attempts by date; selecting a day displays its solve count and summed solve time. Timer-screen quick stats adapt to available screen height, and scramble diagrams scale for phones and tablets.
+
+## Import and export
+
+Export opens a session selector listing only sessions that contain solves. Each entry includes its puzzle, session name, and solve count, and supports selecting or clearing all entries. The resulting JSON includes event identifiers so different puzzles with the same session name remain distinct.
+
+Import accepts Cubyy and csTimer-compatible JSON backups, maps known event identifiers, and restores solves into their matching puzzle sessions. Existing solves are checked to avoid importing duplicates. Keep a copy of important timer data before moving between apps or devices.
+
+## Appearance and settings
+
+- Material 3 dynamic colors from the system wallpaper, or blue, green, yellow, and red color palettes.
+- Light, dark, or system-controlled appearance.
+- Classic or stickerless 3D cube model, adjustable virtual cube size, and scramble text size.
+- Optional hidden running time, touch hold duration, and optional WCA inspection.
+- Adaptive layouts for phone, tablet, portrait, and landscape screens.
+- Project GitHub link and GAN Halo Timer support information in Settings.
+
+## Screenshots
 
 <p align="center">
   <img src="https://github.com/franekk3/cubyy-android/blob/main/media/phone1.png?raw=true" width="19%" />
@@ -20,131 +77,16 @@
   <img src="https://github.com/franekk3/cubyy-android/blob/main/media/phone5.png?raw=true" width="19%" />
 </p>
 
----
+## Build
 
-## ✨ Features
+Open the repository in Android Studio, or build a debug APK from the project root:
 
-### ⏱️ Speedcubing Timer
-- **Precision Timing**: Millisecond-accurate timer running at 60 FPS using monotonic hardware clocks.
-- **WCA Inspection**: Optional 15-second countdown with standard WCA haptic cues at 8s and 12s, plus automatic `+2` (>15s) and `DNF` (>17s) penalties.
-- **Two-Finger / Full-Screen Touch Pad**: Hold anywhere to arm (Red -> Green `READY`), release to solve, tap to stop.
-- **WCA Scramble Generator**: Compliant random-state 3x3 scrambler avoiding consecutive face turns and parallel face cancellations.
-- **Post-Solve Actions**: Quick `+2`, `DNF`, and delete buttons.
-
-### 🧊 Smart Cube Hardware Support
-Cubyy reverse-engineers and natively implements Bluetooth Low Energy (BLE) protocols for all major speedcube brands:
-- **GAN OG & Gen 1**: GAN 356 i, GAN 356 i Play, GAN 356 i 2 (AES-128-ECB decryption via SystemID / MAC salt mixing).
-- **GAN Gen 2 / Gen 3 / Gen 4**: GAN 356 i Carry, i Carry S, i Carry 2, GAN 12 ui, GAN 12 ui FreeDoc, Monster Go 3Ai, AiCube (Nordic UART service `6e400001`, `28be4cb6` notify, AES-128 cipher chaining).
-- **MoYu**: MoYu WeiLong AI, MoYu AI 2023 (`00001000` service, `00001003` turn notifications).
-- **GiiKER**: Super Cube i3s, i2 (`0000aadb` service, `0000aadc` telemetry).
-
-#### Smart Cube Automations:
-- **Auto-Start**: Starts on the first solve turn after the scramble target has been reached.
-- **Auto-Stop**: Uses real-time virtual cube state simulation to detect when all 6 faces are solved and stops immediately.
-- **Live Virtual Cube Visualizer**: A frameless, draggable 3D preview appears on the Timer screen while a cube is connected.
-- **Scramble Mistake Recovery**: If a turn deviates from the scramble, a two-phase solver shows a short route back to the cube state before the first mistake; the original scramble and completed move colors are then restored.
-- **TPS & Reconstruction**: Calculates Turns Per Second (TPS) and saves full move notation sequences (e.g., `R U R' U' ...`).
-- **Battery & Signal Monitoring**: Live battery percentage indicator and RSSI signal strength.
-
-The recovery solver uses `org.worldcubeassociation.tnoodle:scrambler-min2phase` (GPL-3.0). It returns a practical short two-phase route, not a mathematically guaranteed globally shortest route. Distributing this app requires complying with that dependency's license.
-
-### 📊 Solve History & Statistics
-- Comprehensive stats: Best Single, Worst Single, Current Ao5, Best Ao5, Current Ao12, Best Ao12, Session Mean, and Average TPS.
-- Multi-session management: Create and switch between sessions (e.g. `Default`, `3x3`, `Smart Cube`, custom sessions).
-- Detailed solve dialog: Scramble viewer with one-click copy, move reconstruction logs, and solve sharing formatted for Discord and speedcubing forums.
-
-### 🎨 Material You Design
-- Full support for Android 12+ Dynamic Theming (`dynamicDarkColorScheme` / `dynamicLightColorScheme`), adapting color palettes to your system wallpaper.
-- Elegant fallback light & dark high-contrast themes optimized for cubers.
-- Edge-to-edge layout with expressive Material 3 typography and rounded surfaces.
-
----
-
-## 🛠️ Project Structure
-
-```
-cubyy-android/
-├── app/
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/com/cubyy/timer/
-│   │   │   │   ├── MainActivity.kt               # Main entry point & bottom navigation
-│   │   │   │   ├── smartcube/
-│   │   │   │   │   ├── SmartCubeManager.kt       # BLE scanner, connection & protocol router
-│   │   │   │   │   ├── model/
-│   │   │   │   │   │   ├── CubeModel.kt          # Face, Color, Move data classes
-│   │   │   │   │   │   ├── VirtualCube.kt        # 3x3 Rubik's Cube state engine
-│   │   │   │   │   │   └── SmartCubeDevice.kt    # Device info & event types
-│   │   │   │   │   └── protocols/
-│   │   │   │   │       ├── SmartCubeProtocol.kt  # Protocol driver interface
-│   │   │   │   │       ├── GanGen1Protocol.kt    # GAN 356 i, i Play, i2 driver
-│   │   │   │   │       ├── GanGen2Protocol.kt    # GAN i Carry, 12 ui, Monster Go driver
-│   │   │   │   │       ├── MoyuProtocol.kt       # MoYu WeiLong AI driver
-│   │   │   │   │       └── GiikerProtocol.kt     # GiiKER Super Cube driver
-│   │   │   │   ├── scramble/
-│   │   │   │   │   └── ScrambleGenerator.kt      # WCA 3x3 scramble generation
-│   │   │   │   ├── timer/
-│   │   │   │   │   └── TimerEngine.kt            # High-precision timer & smart cube sync
-│   │   │   │   ├── data/
-│   │   │   │   │   ├── Solve.kt                  # Solve model & Ao5/Ao12 calculator
-│   │   │   │   │   ├── SolveRepository.kt        # Persistent solve & session storage
-│   │   │   │   │   └── SettingsRepository.kt     # User preferences storage
-│   │   │   │   └── ui/
-│   │   │   │       ├── components/
-│   │   │   │       │   └── VirtualCubeView.kt    # 3D isometric & 2D net cube renderer
-│   │   │   │       ├── screens/
-│   │   │   │       │   ├── TimerScreen.kt        # Main timer interface
-│   │   │   │       │   ├── SmartCubeScreen.kt    # BLE device scanner & live cube hub
-│   │   │   │       │   ├── HistoryScreen.kt      # Solves history, stats & details
-│   │   │   │       │   └── SettingsScreen.kt     # Preferences & hardware config
-│   │   │   │       └── theme/
-│   │   │   │           ├── Color.kt              # Material 3 color definitions
-│   │   │   │           ├── Type.kt               # Monospace & display typography
-│   │   │   │           └── Theme.kt              # Material You dynamic theme
-│   │   │   ├── res/                              # Drawables, layouts, strings, themes
-│   │   │   └── AndroidManifest.xml               # Permissions & BLE configurations
-│   │   └── test/                                 # Unit tests for cube math, stats & scrambles
-│   └── build.gradle.kts                          # Module dependencies & compile SDK 35
-├── gradle/
-│   └── libs.versions.toml                        # Version catalog (AGP 9.4, Kotlin 2.2, Compose)
-├── build.gradle.kts                              # Root buildscript
-├── settings.gradle.kts                           # Module registration
-└── gradle.properties                             # Build optimization & JVM arguments
-```
-
----
-
-## 🚀 Building & Running
-
-### Option 1: Android Studio (Recommended)
-1. Launch **Android Studio**.
-2. Select **Open** and choose `/home/frank/Documents/projects/cubyy-android`.
-3. Wait for Gradle Sync to finish.
-4. Select your connected Android device or emulator (Android 8.0+ / API 26+) and click **Run (Shift + F10)**.
-
-### Option 2: Command Line (Gradle)
 ```bash
-# Verify tasks
-./gradlew tasks
-
-# Run unit tests
-./gradlew testDebugUnitTest
-
-# Assemble debug APK
 ./gradlew assembleDebug
 ```
-The compiled APK will be output at:
-`app/build/outputs/apk/debug/app-debug.apk`
 
----
+The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
-## 🔒 Permissions Used
-- `BLUETOOTH_SCAN` & `BLUETOOTH_CONNECT` (Android 12+): Required to discover and connect to smart cubes.
-- `ACCESS_FINE_LOCATION` (Android 11 and earlier): Required by legacy Android OS for BLE peripheral scanning.
-- `VIBRATE`: Provides haptic cues during inspection (8s, 12s) and solve finish.
+## License
 
----
-
-## 📜 License
-
-This project is licensed under the **GNU General Public License v3.0 (GPLv3)**. See the [LICENSE](LICENSE) file for full details.
+Cubyy is licensed under the [GNU General Public License v3.0](LICENSE). Third-party libraries retain their respective licenses.

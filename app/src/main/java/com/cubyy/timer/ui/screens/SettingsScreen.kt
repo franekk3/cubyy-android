@@ -14,12 +14,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -50,16 +54,23 @@ import com.cubyy.timer.data.CsTimerImportSummary
 import com.cubyy.timer.data.CsTimerBackup
 import com.cubyy.timer.data.CsTimerBackupImport
 import com.cubyy.timer.smartcube.model.VirtualCube
+import com.cubyy.timer.scramble.WcaEvent
 import com.cubyy.timer.ui.components.VirtualCubeView
 
 @Composable
 fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: SolveRepository) {
     val settings by settingsRepository.settings.collectAsState()
     val sessions by solveRepository.sessions.collectAsState()
+    val solves by solveRepository.solves.collectAsState()
     val context = LocalContext.current
     var pendingImport by remember { mutableStateOf<CsTimerBackupImport?>(null) }
     var pendingImportJson by remember { mutableStateOf<String?>(null) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
+    var showExportDialog by remember { mutableStateOf(false) }
+    var selectedExportSessionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val exportableSessions = remember(sessions, solves) {
+        sessions.filter { session -> solves.any { it.sessionId == session.id } }
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -67,7 +78,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
         if (uri != null) {
             runCatching {
                 context.contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
-                    writer.write(solveRepository.exportCsTimerBackup())
+                    writer.write(solveRepository.exportCsTimerBackup(selectedExportSessionIds))
                 } ?: error("Could not open the selected file.")
             }.onSuccess {
                 backupMessage = "csTimer backup exported."
@@ -86,7 +97,9 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
                     ?: error("Could not read the selected file.")
                 json to CsTimerBackup.parse(json)
             }.onSuccess { (json, backup) ->
-                val hasNameCollision = backup.sessions.any { it.name in sessions }
+                val hasNameCollision = backup.sessions.any { incoming ->
+                    sessions.any { it.eventId == incoming.eventId && it.name == incoming.name }
+                }
                 if (hasNameCollision) {
                     pendingImport = backup
                     pendingImportJson = json
@@ -232,13 +245,16 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        "Import or export all sessions as a csTimer JSON backup.",
+                        "Import csTimer backups or export selected sessions that contain solves.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(
-                            onClick = { exportLauncher.launch("Cubyy-csTimer-backup.json") },
+                            onClick = {
+                                selectedExportSessionIds = exportableSessions.mapTo(mutableSetOf()) { it.id }
+                                showExportDialog = true
+                            },
                             modifier = Modifier.weight(1f)
                         ) { Text("Export") }
                         OutlinedButton(
@@ -366,7 +382,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = "Cubyy - Speedcubing Timer v1.1.0 BETA",
+                        text = "Cubyy - Speedcubing Timer v2.0 BETA",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -407,10 +423,71 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
         }
     }
 
+    if (showExportDialog) {
+        val allIds = exportableSessions.mapTo(mutableSetOf()) { it.id }
+        val allSelected = allIds.isNotEmpty() && selectedExportSessionIds.containsAll(allIds)
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            title = { Text("Choose sessions to export") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    TextButton(
+                        onClick = {
+                            selectedExportSessionIds = if (allSelected) emptySet() else allIds
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(if (allSelected) "Deselect all" else "Select all") }
+                    if (exportableSessions.isEmpty()) {
+                        Text("There are no sessions with solves to export.")
+                    }
+                    exportableSessions.forEach { session ->
+                        val count = solves.count { it.sessionId == session.id }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                selectedExportSessionIds = if (session.id in selectedExportSessionIds) {
+                                    selectedExportSessionIds - session.id
+                                } else selectedExportSessionIds + session.id
+                            },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = session.id in selectedExportSessionIds,
+                                onCheckedChange = { checked ->
+                                    selectedExportSessionIds = if (checked) selectedExportSessionIds + session.id
+                                    else selectedExportSessionIds - session.id
+                                }
+                            )
+                            Column {
+                                Text("${session.event.label} · ${session.name}")
+                                Text("$count solves", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = selectedExportSessionIds.isNotEmpty(),
+                    onClick = {
+                        showExportDialog = false
+                        exportLauncher.launch("Cubyy-csTimer-backup.json")
+                    }
+                ) { Text("Export") }
+            },
+            dismissButton = { TextButton(onClick = { showExportDialog = false }) { Text("Cancel") } }
+        )
+    }
+
     val collisionBackup = pendingImport
     val collisionJson = pendingImportJson
     if (collisionBackup != null && collisionJson != null) {
-        val collidingNames = collisionBackup.sessions.map { it.name }.filter { it in sessions }.distinct()
+        val collidingNames = collisionBackup.sessions
+            .filter { incoming -> sessions.any { it.eventId == incoming.eventId && it.name == incoming.name } }
+            .map { "${WcaEvent.fromId(it.eventId).label}: ${it.name}" }
+            .distinct()
         AlertDialog(
             onDismissRequest = {
                 pendingImport = null
@@ -421,7 +498,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("The backup contains session names already in Cubyy:")
                     Text(collidingNames.joinToString(", "), fontWeight = FontWeight.SemiBold)
-                    Text("csTimer session numbers are local to each backup, so names are used to identify sessions. Merge matching names and skip duplicate solves, or import them as separate sessions.")
+                    Text("Sessions are matched by puzzle and name. Merge matching sessions and skip duplicate solves, or import them separately.")
                 }
             },
             confirmButton = {
