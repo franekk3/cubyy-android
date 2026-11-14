@@ -9,6 +9,19 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -64,6 +77,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -186,7 +200,7 @@ fun TimerScreen(
         }
     } else Modifier
     val effectiveCubeScale = userSettings.cubeScale * when {
-        isTablet -> 0.70f
+        isTablet -> 0.495f
         isLandscape -> 0.90f
         else -> 1f
     }
@@ -237,9 +251,20 @@ fun TimerScreen(
 
             // Scramble Card (Hidden when running for distraction-free solving)
             if (status != TimerStatus.RUNNING) {
+                val isMultiBlindScramble = currentSession.eventId == "333mbf"
+                val scrambleLine = if (isMultiBlindScramble) {
+                    scramble.lines().maxOfOrNull { it.length + 6 } ?: 0
+                } else {
+                    scramble.trim().split("\\s+".toRegex()).joinToString("  ").length
+                }
+                val scrambleFontSizeSp = if (isMultiBlindScramble) 14f else
+                    MaterialTheme.typography.titleMedium.fontSize.value * userSettings.scrambleFontScale
+                val tabletScrambleWidth = remember(scramble, isMultiBlindScramble, userSettings.scrambleFontScale) {
+                    (scrambleLine * scrambleFontSizeSp * 0.60f + 48f).coerceIn(280f, 1120f).dp
+                }
                 Card(
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .then(if (isTablet) Modifier.width(tabletScrambleWidth) else Modifier.fillMaxWidth())
                         .padding(vertical = 12.dp)
                         .clickable {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -255,7 +280,7 @@ fun TimerScreen(
                         modifier = Modifier.padding(16.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        if (currentSession.eventId == "333mbf" && status != TimerStatus.RUNNING) {
+                        if (isMultiBlindScramble && status != TimerStatus.RUNNING) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Text("Cubes in this attempt", style = MaterialTheme.typography.labelLarge)
                                 TextButton(
@@ -363,8 +388,8 @@ fun TimerScreen(
             // Timer and connected-cube preview share the available center area.
             if (isLandscape) {
                 Row(
-                    modifier = Modifier.weight(1f).fillMaxWidth().then(touchTimerModifier),
-                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.weight(1f).fillMaxWidth().animateContentSize(tween(220)).then(touchTimerModifier),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(
@@ -383,18 +408,34 @@ fun TimerScreen(
                             onPenaltyChange = timerEngine::setLastSolvePenalty,
                             onDeleteSolve = { showDeleteSolveDialog = true }
                         )
-                        if (connectedDevice?.isTimer == false && status == TimerStatus.STOPPED && smartCubeSolveSummary != null) {
-                            SmartCubeSolveSummaryBar(smartCubeSolveSummary!!.moveCount, smartCubeSolveSummary!!.turnsPerSecond)
+                        AnimatedContent(
+                            targetState = smartCubeSolveSummary.takeIf { connectedDevice?.isTimer == false && status == TimerStatus.STOPPED },
+                            transitionSpec = { (fadeIn(tween(160)) + slideInVertically(tween(200)) { it / 3 }) togetherWith (fadeOut(tween(100)) + slideOutVertically(tween(140)) { -it / 3 }) },
+                            label = "Move summary"
+                        ) { summary -> summary?.let { SmartCubeSolveSummaryBar(it.moveCount, it.turnsPerSecond) } }
+                        AnimatedVisibility(
+                            visible = connectedDevice?.isTimer == true,
+                            enter = fadeIn(tween(200)) + scaleIn(tween(240), initialScale = 0.94f),
+                            exit = fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 0.96f)
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Spacer(Modifier.height(12.dp))
+                                GanTimerGraphic(status, Modifier.widthIn(max = 400.dp).fillMaxWidth(0.60f).aspectRatio(1000f / 280f))
+                            }
                         }
-                        if (connectedDevice?.isTimer == true) GanTimerGraphic(status, Modifier.widthIn(max = 420.dp).fillMaxWidth(0.72f).aspectRatio(1000f / 280f))
                     }
-                    if (connectedDevice?.isTimer == false && currentSession.event.threeByThreeHardware) {
+                    AnimatedVisibility(
+                        visible = connectedDevice?.isTimer == false && currentSession.event.threeByThreeHardware,
+                        modifier = Modifier.weight(0.9f).aspectRatio(1.2f).scale(effectiveCubeScale),
+                        enter = fadeIn(tween(200)) + scaleIn(tween(240), initialScale = 0.94f),
+                        exit = fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 0.96f)
+                    ) {
                         VirtualCubeView(
                             virtualCube = virtualCube,
                             animation = cubeTurnAnimation,
                             orientation = displayOrientation,
                             appearance = userSettings.cubeAppearance,
-                            modifier = Modifier.weight(0.9f).aspectRatio(1.2f).scale(effectiveCubeScale)
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
                 }
@@ -402,7 +443,7 @@ fun TimerScreen(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.weight(1f).fillMaxWidth().then(touchTimerModifier)
+                    modifier = Modifier.weight(1f).fillMaxWidth().animateContentSize(tween(220)).then(touchTimerModifier)
                 ) {
                     TimerReadout(
                         modifier = Modifier.fillMaxWidth(),
@@ -416,19 +457,36 @@ fun TimerScreen(
                         onPenaltyChange = timerEngine::setLastSolvePenalty,
                         onDeleteSolve = { showDeleteSolveDialog = true }
                     )
-                    if (connectedDevice?.isTimer == false && status == TimerStatus.STOPPED && smartCubeSolveSummary != null) {
-                        SmartCubeSolveSummaryBar(smartCubeSolveSummary!!.moveCount, smartCubeSolveSummary!!.turnsPerSecond)
+                    AnimatedContent(
+                        targetState = smartCubeSolveSummary.takeIf { connectedDevice?.isTimer == false && status == TimerStatus.STOPPED },
+                        transitionSpec = { (fadeIn(tween(160)) + slideInVertically(tween(200)) { it / 3 }) togetherWith (fadeOut(tween(100)) + slideOutVertically(tween(140)) { -it / 3 }) },
+                        label = "Move summary"
+                    ) { summary -> summary?.let { SmartCubeSolveSummaryBar(it.moveCount, it.turnsPerSecond) } }
+                    AnimatedVisibility(
+                        visible = connectedDevice?.isTimer == true,
+                        enter = fadeIn(tween(200)) + scaleIn(tween(240), initialScale = 0.94f),
+                        exit = fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 0.96f)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Spacer(Modifier.height(12.dp))
+                            GanTimerGraphic(status, Modifier.widthIn(max = if (isTablet) 380.dp else 400.dp).fillMaxWidth(if (isTablet) 0.44f else 0.74f).aspectRatio(1000f / 280f))
+                        }
                     }
-                    if (connectedDevice?.isTimer == true) {
-                        GanTimerGraphic(status, Modifier.widthIn(max = 420.dp).fillMaxWidth(if (isTablet) 0.48f else 0.78f).aspectRatio(1000f / 280f))
-                    } else if (connectedDevice != null && currentSession.event.threeByThreeHardware) {
-                        VirtualCubeView(
-                            virtualCube = virtualCube,
-                            animation = cubeTurnAnimation,
-                            orientation = displayOrientation,
-                            appearance = userSettings.cubeAppearance,
-                            modifier = Modifier.fillMaxWidth(if (isTablet) 0.40f else 0.58f).aspectRatio(1.2f).scale(effectiveCubeScale)
-                        )
+                    AnimatedVisibility(
+                        visible = connectedDevice?.isTimer == false && currentSession.event.threeByThreeHardware,
+                        enter = fadeIn(tween(200)) + scaleIn(tween(240), initialScale = 0.94f),
+                        exit = fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 0.96f)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Spacer(Modifier.height(12.dp))
+                            VirtualCubeView(
+                                virtualCube = virtualCube,
+                                animation = cubeTurnAnimation,
+                                orientation = displayOrientation,
+                                appearance = userSettings.cubeAppearance,
+                                modifier = Modifier.fillMaxWidth(if (isTablet) 0.40f else 0.58f).aspectRatio(1.2f).scale(effectiveCubeScale)
+                            )
+                        }
                     }
                 }
             }
@@ -437,6 +495,7 @@ fun TimerScreen(
             BottomStatsSection(
                 sessionStats = sessionStats,
                 isTablet = isTablet,
+                useHorizontalStats = isTablet || connectedDevice?.isTimer == false,
                 eventId = currentSession.eventId,
                 scramble = scramble,
                 showScrambleImage = connectedDevice?.isTimer != false && scramble.isNotBlank(),
@@ -639,7 +698,7 @@ private fun TimerReadout(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 132.dp),
+                .heightIn(min = 96.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -655,10 +714,14 @@ private fun TimerReadout(
                 textAlign = TextAlign.Center
             )
         }
-        if (showPenaltyEditor) {
+        AnimatedVisibility(
+            visible = showPenaltyEditor,
+            enter = fadeIn(tween(140)) + expandVertically(tween(180), expandFrom = Alignment.Top) + slideInVertically(tween(180)) { -it / 4 },
+            exit = fadeOut(tween(110)) + shrinkVertically(tween(140), shrinkTowards = Alignment.Top) + slideOutVertically(tween(140)) { -it / 5 }
+        ) {
             Row(
-                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(top = 0.dp, bottom = 2.dp).animateContentSize(tween(160)),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 FilterChip(
@@ -716,7 +779,7 @@ private fun GanTimerGraphic(status: TimerStatus, modifier: Modifier = Modifier) 
         TimerStatus.BLOCKED -> TimerOrange
         else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
     }
-    Canvas(modifier = modifier.padding(vertical = 6.dp)) {
+    Canvas(modifier = modifier.padding(vertical = 2.dp)) {
         val sx = size.width / 1000f
         val sy = size.height / 280f
         val stroke = size.height * 0.036f
@@ -787,32 +850,44 @@ private fun TopBarSection(
             // Smart Cube Pill
             Surface(
                 shape = CircleShape,
-                color = if (connectedDeviceName != null) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                },
-                modifier = Modifier.clickable { onSmartCubeClick() }
+        color = animateColorAsState(
+            targetValue = if (connectedDeviceName != null) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant,
+            label = "Bluetooth status color"
+        ).value,
+        modifier = Modifier.clickable { onSmartCubeClick() }.animateContentSize(tween(180))
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(
-                        imageVector = if (connectedDeviceName != null) Icons.Default.BluetoothConnected else Icons.Default.Bluetooth,
-                        contentDescription = "Bluetooth device",
-                        modifier = Modifier.size(16.dp),
-                        tint = if (connectedDeviceName != null) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = connectedDeviceName ?: "Connect",
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.widthIn(max = 132.dp),
-                        color = if (connectedDeviceName != null) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    AnimatedContent(
+                        targetState = connectedDeviceName != null,
+                        transitionSpec = { fadeIn(tween(140)) + scaleIn(tween(180), initialScale = 0.82f) togetherWith fadeOut(tween(100)) + scaleOut(tween(120), targetScale = 0.82f) },
+                        label = "Bluetooth icon state"
+                    ) { connected ->
+                        Icon(
+                            imageVector = if (connected) Icons.Default.BluetoothConnected else Icons.Default.Bluetooth,
+                            contentDescription = "Bluetooth device",
+                            modifier = Modifier.size(16.dp),
+                            tint = if (connected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    AnimatedContent(
+                        targetState = connectedDeviceName ?: "Connect",
+                        transitionSpec = { fadeIn(tween(160)) + slideInVertically(tween(180)) { it / 3 } togetherWith fadeOut(tween(100)) + slideOutVertically(tween(140)) { -it / 3 } },
+                        label = "Bluetooth device name"
+                    ) { name ->
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 132.dp),
+                            color = if (connectedDeviceName != null) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     if (batteryLevel >= 0) {
                         Text(
                             text = "$batteryLevel%",
@@ -846,6 +921,7 @@ private fun TopBarSection(
 private fun BottomStatsSection(
     sessionStats: SessionStats,
     isTablet: Boolean,
+    useHorizontalStats: Boolean,
     eventId: String,
     scramble: String,
     showScrambleImage: Boolean,
@@ -858,7 +934,7 @@ private fun BottomStatsSection(
         "Best" to (sessionStats.bestSingle?.let { Solve.formatMillis(it) } ?: "-"),
         "Solves" to "${sessionStats.solveCount}"
     )
-    if (isTablet) {
+    if (useHorizontalStats) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -954,63 +1030,72 @@ private fun SmartCubeConnectionDialog(
         title = { Text("Bluetooth device") },
         text = {
             Column(
-                modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                modifier = Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()).animateContentSize(tween(180)),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                if (connectedDeviceName != null) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.BluetoothConnected, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(connectedDeviceName, fontWeight = FontWeight.SemiBold)
-                                }
-                                if (connectedBatteryPercent >= 0) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            Icons.Default.BatteryFull,
-                                            contentDescription = "Battery",
-                                            modifier = Modifier.size(16.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(
-                                            "$connectedBatteryPercent% battery",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                AnimatedContent(
+                    targetState = connectedDeviceName?.let { it to connectedDeviceIsTimer },
+                    transitionSpec = {
+                        (fadeIn(tween(180)) + expandVertically(tween(220)) + slideInVertically(tween(220)) { -it / 5 }) togetherWith
+                            (fadeOut(tween(120)) + shrinkVertically(tween(160)) + slideOutVertically(tween(160)) { -it / 6 })
+                    },
+                    label = "Connected device panel"
+                ) { deviceInfo ->
+                    if (deviceInfo != null) {
+                        val (deviceName, isTimer) = deviceInfo
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.BluetoothConnected, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(deviceName, fontWeight = FontWeight.SemiBold)
+                                        }
+                                        if (connectedBatteryPercent >= 0) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    Icons.Default.BatteryFull,
+                                                    contentDescription = "Battery",
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(Modifier.width(4.dp))
+                                                Text(
+                                                    "$connectedBatteryPercent% battery",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (!connectedDeviceIsTimer) {
-                            OutlinedButton(onClick = onResetCube, modifier = Modifier.weight(1f)) {
-                                Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Reset cube state")
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (!isTimer) {
+                                    OutlinedButton(onClick = onResetCube, modifier = Modifier.weight(1f)) {
+                                        Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Reset cube state")
+                                    }
+                                }
+                                TextButton(onClick = onDisconnect) { Text("Disconnect") }
                             }
-                        }
-                        TextButton(onClick = onDisconnect) { Text("Disconnect") }
-                    }
-                    if (gyroSupported && !connectedDeviceIsTimer) {
-                        OutlinedButton(
-                            onClick = onResetGyro,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Reset gyro orientation")
+                            if (gyroSupported && !isTimer) {
+                                OutlinedButton(onClick = onResetGyro, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Reset gyro orientation")
+                                }
+                            }
                         }
                     }
                 }
@@ -1021,15 +1106,23 @@ private fun SmartCubeConnectionDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Nearby devices", style = MaterialTheme.typography.titleSmall)
-                    FilledTonalButton(onClick = onScan) {
-                        if (isScanning) {
-                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Stop")
-                        } else {
-                            Icon(Icons.Default.Bluetooth, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Scan")
+                    FilledTonalButton(onClick = onScan, modifier = Modifier.animateContentSize(tween(160))) {
+                        AnimatedContent(
+                            targetState = isScanning,
+                            transitionSpec = { fadeIn(tween(120)) + scaleIn(tween(160), initialScale = 0.9f) togetherWith fadeOut(tween(80)) + scaleOut(tween(120), targetScale = 0.9f) },
+                            label = "Scan button state"
+                        ) { scanning ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (scanning) {
+                                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Stop")
+                                } else {
+                                    Icon(Icons.Default.Bluetooth, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Scan")
+                                }
+                            }
                         }
                     }
                 }
@@ -1043,6 +1136,11 @@ private fun SmartCubeConnectionDialog(
                 }
 
                 devices.forEach { device ->
+                    key(device.address) {
+                    AnimatedVisibility(
+                        visible = true,
+                        enter = fadeIn(tween(160)) + expandVertically(tween(200)) + slideInVertically(tween(200)) { it / 5 }
+                    ) {
                     val alreadyConnected = device.address == connectedDeviceAddress
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -1055,12 +1153,24 @@ private fun SmartCubeConnectionDialog(
                         }
                         OutlinedButton(
                             onClick = { onConnect(device) },
-                            enabled = !alreadyConnected
+                            enabled = !alreadyConnected && !isConnecting,
+                            modifier = Modifier.animateContentSize(tween(150))
                         ) {
-                            if (alreadyConnected) Text("Connected")
-                            else if (isConnecting) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                            else Text("Connect")
+                            AnimatedContent(
+                                targetState = when {
+                                    alreadyConnected -> "Connected"
+                                    isConnecting -> "Connecting"
+                                    else -> "Connect"
+                                },
+                                transitionSpec = { fadeIn(tween(120)) togetherWith fadeOut(tween(80)) },
+                                label = "Device connect state"
+                            ) { state ->
+                                if (state == "Connecting") CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                else Text(state)
+                            }
                         }
+                    }
+                    }
                     }
                 }
             }

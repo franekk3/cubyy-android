@@ -2,6 +2,9 @@ package com.cubyy.timer.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +21,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,10 +46,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.cubyy.timer.data.SettingsRepository
@@ -56,13 +62,18 @@ import com.cubyy.timer.data.CsTimerBackupImport
 import com.cubyy.timer.smartcube.model.VirtualCube
 import com.cubyy.timer.scramble.WcaEvent
 import com.cubyy.timer.ui.components.VirtualCubeView
+import com.cubyy.timer.ui.components.ScrollToTopButton
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: SolveRepository) {
+    val isTablet = LocalConfiguration.current.screenWidthDp >= 600
     val settings by settingsRepository.settings.collectAsState()
     val sessions by solveRepository.sessions.collectAsState()
     val solves by solveRepository.solves.collectAsState()
     val context = LocalContext.current
+    val settingsListState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
     var pendingImport by remember { mutableStateOf<CsTimerBackupImport?>(null) }
     var pendingImportJson by remember { mutableStateOf<String?>(null) }
     var backupMessage by remember { mutableStateOf<String?>(null) }
@@ -123,6 +134,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
 
     Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
+        state = settingsListState,
         modifier = Modifier
             .widthIn(max = 1000.dp)
             .fillMaxSize()
@@ -276,6 +288,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
                     appearance = "CLASSIC",
                     selected = settings.cubeAppearance == "CLASSIC",
                     onSelect = { settingsRepository.updateCubeAppearance("CLASSIC") },
+                    isTablet = isTablet,
                     modifier = Modifier.weight(1f)
                 )
                 CubeAppearanceOption(
@@ -284,6 +297,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
                     appearance = "STICKERLESS",
                     selected = settings.cubeAppearance == "STICKERLESS",
                     onSelect = { settingsRepository.updateCubeAppearance("STICKERLESS") },
+                    isTablet = isTablet,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -382,7 +396,7 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = "Cubyy - Speedcubing Timer v1.3.0 BETA",
+                        text = "Cubyy - Speedcubing Timer v1.4.0 BETA",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -422,6 +436,11 @@ fun SettingsScreen(settingsRepository: SettingsRepository, solveRepository: Solv
             }
         }
     }
+    ScrollToTopButton(
+        visible = settingsListState.firstVisibleItemIndex > 1,
+        onClick = { coroutineScope.launch { settingsListState.animateScrollToItem(0) } },
+        modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp)
+    )
 
     if (showExportDialog) {
         val allIds = exportableSessions.mapTo(mutableSetOf()) { it.id }
@@ -534,17 +553,26 @@ private fun CubeAppearanceOption(
     appearance: String,
     selected: Boolean,
     onSelect: () -> Unit,
+    isTablet: Boolean,
     modifier: Modifier = Modifier
 ) {
     val previewCube = remember { VirtualCube() }
+    val containerColor by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+        else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(180),
+        label = "Cube appearance selection"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+        animationSpec = tween(180),
+        label = "Cube appearance border"
+    )
     Card(
-        modifier = modifier.clickable(onClick = onSelect),
+        modifier = modifier.animateContentSize(tween(180)).clickable(onClick = onSelect),
         shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
-            else MaterialTheme.colorScheme.surface
-        ),
-        border = if (selected) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        border = androidx.compose.foundation.BorderStroke(if (selected) 2.dp else 0.dp, borderColor)
     ) {
         Column(
             modifier = Modifier.padding(10.dp),
@@ -552,12 +580,18 @@ private fun CubeAppearanceOption(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            VirtualCubeView(
-                virtualCube = previewCube,
-                appearance = appearance,
-                autoRotate = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                VirtualCubeView(
+                    virtualCube = previewCube,
+                    appearance = appearance,
+                    autoRotate = true,
+                    modifier = if (isTablet) Modifier.widthIn(max = 220.dp).heightIn(max = 190.dp)
+                    else Modifier.fillMaxWidth()
+                )
+            }
             Text(
                 description,
                 style = MaterialTheme.typography.labelSmall,

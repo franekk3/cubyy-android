@@ -40,6 +40,7 @@ fun WcaScrambleImages(
     eventId: String,
     scramble: String,
     imageScale: Float = 1f,
+    renderScale: Float = 1f,
     modifier: Modifier = Modifier
 ) {
     val lines = if (eventId == "333mbf") {
@@ -48,7 +49,7 @@ fun WcaScrambleImages(
 
     if (lines.size <= 1) {
         val renderEventId = if (eventId == "333mbf") WcaEvent.CUBE_3_BLIND.id else eventId
-        WcaScrambleImage(renderEventId, lines.firstOrNull().orEmpty(), imageScale, modifier)
+        WcaScrambleImage(renderEventId, lines.firstOrNull().orEmpty(), imageScale, renderScale, modifier)
     } else {
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
@@ -67,6 +68,7 @@ fun WcaScrambleImages(
                         WcaEvent.CUBE_3_BLIND.id,
                         line,
                         imageScale,
+                        renderScale,
                         Modifier.fillMaxWidth().aspectRatio(1.35f)
                     )
                 }
@@ -76,8 +78,14 @@ fun WcaScrambleImages(
 }
 
 @Composable
-private fun WcaScrambleImage(eventId: String, scramble: String, imageScale: Float, modifier: Modifier) {
-    val image by produceState<ImageBitmap?>(null, eventId, scramble) {
+private fun WcaScrambleImage(
+    eventId: String,
+    scramble: String,
+    imageScale: Float,
+    renderScale: Float,
+    modifier: Modifier
+) {
+    val image by produceState<ImageBitmap?>(null, eventId, scramble, renderScale) {
         value = if (scramble.isBlank()) null else withContext(Dispatchers.Default) {
             runCatching {
                 val svgText = WcaEvent.fromId(eventId).drawScrambleSvg(scramble)
@@ -89,10 +97,12 @@ private fun WcaScrambleImage(eventId: String, scramble: String, imageScale: Floa
                     .find(svgText)?.groupValues
                 val width = viewBox?.getOrNull(1)?.toFloatOrNull()?.toInt()?.coerceAtLeast(1) ?: 130
                 val height = viewBox?.getOrNull(2)?.toFloatOrNull()?.toInt()?.coerceAtLeast(1) ?: 98
-                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                val bitmapWidth = (width * renderScale).toInt().coerceAtLeast(width)
+                val bitmapHeight = (height * renderScale).toInt().coerceAtLeast(height)
+                val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
                 bitmap.eraseColor(android.graphics.Color.TRANSPARENT)
                 val canvas = AndroidCanvas(bitmap)
-                document.renderToCanvas(canvas, RectF(0f, 0f, width.toFloat(), height.toFloat()))
+                document.renderToCanvas(canvas, RectF(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat()))
                 val pixels = IntArray(bitmap.width * bitmap.height)
                 bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
                 var left = bitmap.width

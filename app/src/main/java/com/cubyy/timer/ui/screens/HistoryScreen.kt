@@ -4,7 +4,15 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -28,6 +36,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -69,6 +78,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -96,6 +106,8 @@ import com.cubyy.timer.timer.CubeTurnAnimation
 import com.cubyy.timer.ui.components.VirtualCubeView
 import com.cubyy.timer.ui.components.WcaScrambleImages
 import com.cubyy.timer.ui.components.PuzzleSessionPickerDialog
+import com.cubyy.timer.ui.components.ScrollToTopButton
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -108,7 +120,7 @@ import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 import java.time.format.DateTimeFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HistoryScreen(
     solveRepository: SolveRepository,
@@ -129,6 +141,9 @@ fun HistoryScreen(
     }
 
     var selectedSolve by remember { mutableStateOf<Solve?>(null) }
+    val solvesListState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    LaunchedEffect(currentSession.id) { solvesListState.scrollToItem(0) }
     var selectedStatsPage by remember { mutableIntStateOf(0) }
     var selectedActivityDate by remember(currentSession) { mutableStateOf<LocalDate?>(null) }
     var showNewSessionDialog by remember { mutableStateOf(false) }
@@ -201,49 +216,70 @@ fun HistoryScreen(
         }
 
         Spacer(modifier = Modifier.height(12.dp))
-        if (selectedStatsPage == 0) {
-            Column(
-                modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                SessionActivityHeatmap(
-                    solves = sessionSolves,
-                    selectedDate = selectedActivityDate,
-                    onDateSelected = { selectedActivityDate = it }
-                )
-                selectedActivityDate?.let { date ->
-                    DaySummaryCard(
-                        date = date,
-                        solves = sessionSolves.filter { it.localDate() == date }
+        AnimatedContent(
+            targetState = selectedStatsPage,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            transitionSpec = {
+                (fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 14 }) togetherWith
+                    (fadeOut(tween(120)) + slideOutVertically(tween(160)) { -it / 14 })
+            },
+            label = "Statistics page"
+        ) { page ->
+            if (page == 0) {
+                Column(
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    SessionActivityHeatmap(
+                        solves = sessionSolves,
+                        selectedDate = selectedActivityDate,
+                        onDateSelected = { selectedActivityDate = it }
+                    )
+                    selectedActivityDate?.let { date ->
+                        DaySummaryCard(
+                            date = date,
+                            solves = sessionSolves.filter { it.localDate() == date }
+                        )
+                    }
+                    SolveTimeTrendChart(sessionSolves)
+                    SessionStatsCard(sessionStats, sessionSolves)
+                }
+            } else if (sessionSolves.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "No solves in this session yet.\nStart solving on the Timer tab!",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
-                SolveTimeTrendChart(sessionSolves)
-                SessionStatsCard(sessionStats, sessionSolves)
-            }
-        } else if (sessionSolves.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    "No solves in this session yet.\nStart solving on the Timer tab!",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                itemsIndexed(sessionSolves.reversed()) { revIndex, solve ->
-                    SolveHistoryItem(
-                        index = sessionSolves.size - revIndex,
-                        solve = solve,
-                        onClick = { selectedSolve = solve }
-                    )
+            } else {
+                LazyColumn(
+                    state = solvesListState,
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    itemsIndexed(
+                        items = sessionSolves.reversed(),
+                        key = { _, solve -> solve.id }
+                    ) { revIndex, solve ->
+                        SolveHistoryItem(
+                            index = sessionSolves.size - revIndex,
+                            solve = solve,
+                            onClick = { selectedSolve = solve },
+                            modifier = Modifier.animateItem()
+                        )
+                    }
                 }
             }
         }
     }
+
+    ScrollToTopButton(
+        visible = selectedStatsPage == 1 && solvesListState.firstVisibleItemIndex > 2,
+        onClick = { coroutineScope.launch { solvesListState.animateScrollToItem(0) } },
+        modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp)
+    )
 
     if (showSessionPicker) {
         PuzzleSessionPickerDialog(
@@ -647,10 +683,11 @@ private fun StatCell(title: String, value: String) {
 private fun SolveHistoryItem(
     index: Int,
     solve: Solve,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
@@ -724,7 +761,7 @@ private fun SolveDetailContent(
 ) {
     val context = LocalContext.current
     val isTablet = LocalConfiguration.current.screenWidthDp >= 600
-    val scrambleImageWidthFraction = if (isTablet) 0.48f else 0.78f
+    val scrambleImageWidthFraction = if (isTablet) 0.45f else 0.75f
     val replayMoves = remember(solve.id, solve.reconstruction) {
         solve.reconstruction.orEmpty().split("\\s+".toRegex()).mapNotNull(CubeMove::fromNotation)
     }
@@ -831,10 +868,11 @@ private fun SolveDetailContent(
                     WcaScrambleImages(
                         eventId = solve.eventId,
                         scramble = solve.scramble,
+                        renderScale = 4f,
                         modifier = Modifier
                             .fillMaxWidth(scrambleImageWidthFraction)
-                            .widthIn(max = if (isTablet) 320.dp else 280.dp)
-                            .height(if (isTablet) 190.dp else 205.dp)
+                            .widthIn(max = if (isTablet) 300.dp else 265.dp)
+                            .height(if (isTablet) 180.dp else 195.dp)
                             .align(Alignment.CenterHorizontally)
                     )
                 }
@@ -877,10 +915,11 @@ private fun SolveDetailContent(
                         WcaScrambleImages(
                             eventId = solve.eventId,
                             scramble = solve.scramble,
+                            renderScale = 4f,
                             modifier = Modifier
                                 .fillMaxWidth(scrambleImageWidthFraction)
-                                .widthIn(max = if (isTablet) 320.dp else 280.dp)
-                                .height(if (isTablet) 190.dp else 205.dp)
+                                .widthIn(max = if (isTablet) 300.dp else 265.dp)
+                                .height(if (isTablet) 180.dp else 195.dp)
                                 .align(Alignment.CenterHorizontally)
                         )
                     } else {

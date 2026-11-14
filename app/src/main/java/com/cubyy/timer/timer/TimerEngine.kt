@@ -107,6 +107,8 @@ class TimerEngine(
 
     private val _lastSolve = MutableStateFlow<Solve?>(null)
     val lastSolve: StateFlow<Solve?> = _lastSolve.asStateFlow()
+    private val _personalBestEvent = MutableStateFlow(0L)
+    val personalBestEvent: StateFlow<Long> = _personalBestEvent.asStateFlow()
     private val _showTouchPenaltyEditor = MutableStateFlow(false)
     val showTouchPenaltyEditor: StateFlow<Boolean> = _showTouchPenaltyEditor.asStateFlow()
 
@@ -488,6 +490,11 @@ class TimerEngine(
     ): Solve {
         val connected = smartCubeManager.connectedDevice.value
         val moves = _reconstructionMoves.value
+        val session = solveRepository.currentSession.value
+        val existingSessionSolves = solveRepository.solves.value.filter { it.sessionId == session.id }
+        val previousBest = existingSessionSolves.asSequence()
+            .filter { it.penalty != Penalty.DNF }
+            .minOfOrNull { it.effectiveTimeMillis }
 
         val solve = Solve(
             timeMillis = timeMillis,
@@ -496,15 +503,20 @@ class TimerEngine(
             moveCount = if (connected != null && !connected.isTimer) moves.size else null,
             reconstruction = if (moves.isNotEmpty()) moves.joinToString(" ") { it.notation } else null,
             cubeName = connected?.name,
-            sessionName = solveRepository.currentSession.value.name,
-            sessionId = solveRepository.currentSession.value.id,
-            eventId = solveRepository.currentSession.value.eventId,
+            sessionName = session.name,
+            sessionId = session.id,
+            eventId = session.eventId,
             multiBlindAttempted = multiBlindAttempted,
             multiBlindSolved = multiBlindSolved
         )
 
         _lastSolve.value = solve
         solveRepository.addSolve(solve)
+        if (existingSessionSolves.isNotEmpty() && timeMillis > 0L && penalty != Penalty.DNF &&
+            (previousBest == null || solve.effectiveTimeMillis < previousBest)
+        ) {
+            _personalBestEvent.value += 1L
+        }
         _smartCubeSolveSummary.value = if (connected != null && moves.isNotEmpty() && timeMillis > 0L) {
             SmartCubeSolveSummary(moves.size, moves.size / (timeMillis / 1000.0))
         } else {
